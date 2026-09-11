@@ -1,0 +1,93 @@
+import QtQuick
+import "RamModel.js" as Model
+
+Item {
+    id: root
+    property var historyData: ({points:[], seconds:3600, now:0, bucket:15})
+    property color tint: Model.RAMP_FALLBACK.high
+    // Chrome the panel supplies from the active theme. The defaults are the
+    // colours the graph shipped with, so it still stands up on its own.
+    property color swapTint: '#8d9dff'
+    property color grid: '#233039'
+    property color axisText: '#7e959f'
+    property color crosshair: '#71878f'
+    property color hoverBackground: '#17232d'
+    property color hoverBorder: '#40525f'
+    property color hoverForeground: '#edf5f7'
+    property string fontFamily: 'sans-serif'
+    property int hoverIndex: -1
+    readonly property var points: historyData.points || []
+    // History keeps landing every 15s while the dashboard is closed. Painting
+    // for it then is wasted; the graph catches up when it becomes visible.
+    function repaint() { if (root.visible) graph.requestPaint() }
+    onHistoryDataChanged: { hoverIndex=-1; repaint() }
+    onTintChanged: repaint()
+    onSwapTintChanged: repaint()
+    onGridChanged: repaint()
+    onAxisTextChanged: repaint()
+    onVisibleChanged: repaint()
+    Canvas {
+        id: graph
+        anchors.fill: parent
+        onWidthChanged: root.repaint()
+        onHeightChanged: root.repaint()
+        onPaint: {
+            var c=getContext('2d'), w=width-38, h=height-26
+            c.reset();c.clearRect(0,0,width,height)
+            c.font='10px "'+root.fontFamily+'"';c.textAlign='right'
+            for(var line=0;line<=4;line++){
+                var y=8+(h-8)*line/4
+                c.strokeStyle=root.grid;c.lineWidth=1;c.beginPath();c.moveTo(0,y);c.lineTo(w,y);c.stroke()
+                c.fillStyle=root.axisText;c.fillText(String(100-line*25)+'%',width,y+3)
+            }
+            function xAt(p){return w*(p[0]-(root.historyData.now-root.historyData.seconds))/root.historyData.seconds}
+            function yAt(v){return 8+(h-8)*(1-v/100)}
+            var pts=root.points
+            // Empty elapsed time stays empty. Gaps and reboots break every trace.
+            for(var metric=1;metric<=3;metric++){
+                c.lineWidth=metric===1?2.2:1
+                c.strokeStyle=metric===3?root.swapTint:metric===2?Qt.alpha(root.tint,0.28):root.tint
+                c.beginPath()
+                for(var i=0;i<pts.length;i++){
+                    var p=pts[i], x=xAt(p), y=yAt(p[metric])
+                    if(i===0 || p[0]-pts[i-1][0]>root.historyData.bucket*2.5 || p[6]!==pts[i-1][6]) c.moveTo(x,y)
+                    else c.lineTo(x,y)
+                }
+                c.stroke()
+            }
+            if(pts.length){
+                var last=pts[pts.length-1]
+                c.fillStyle=root.tint;c.beginPath();c.arc(xAt(last),yAt(last[1]),3,0,Math.PI*2);c.fill()
+            }
+            c.fillStyle=root.axisText;c.textAlign='left';c.fillText(root.historyData.seconds===3600?'1 hour ago':root.historyData.seconds===86400?'24 hours ago':'7 days ago',0,height-3)
+            c.textAlign='right';c.fillText('now',w,height-3)
+        }
+    }
+    Rectangle {
+        visible: root.hoverIndex >= 0
+        x: root.hoverIndex >= 0 ? Math.max(0,Math.min(parent.width-38,(root.points[root.hoverIndex][0]-(root.historyData.now-root.historyData.seconds))/root.historyData.seconds*(parent.width-38))) : 0
+        y: 8; width: 1; height: parent.height-34; color: root.crosshair
+    }
+    Rectangle {
+        visible: root.hoverIndex >= 0
+        anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter
+        width: hoverText.implicitWidth+20; height: 27; radius: 7; color:root.hoverBackground;border.color:root.hoverBorder
+        Text {
+            id: hoverText; anchors.centerIn:parent; color:root.hoverForeground;font.family:root.fontFamily;font.pixelSize:11
+            text: {
+                if(root.hoverIndex<0) return ''
+                var p=root.points[root.hoverIndex]
+                return Qt.formatDateTime(new Date(p[0]*1000),'ddd h:mm AP')+'  ·  RAM '+Model.pct(p[1])+'  ·  Swap '+Model.pct(p[3])
+            }
+        }
+    }
+    MouseArea {
+        anchors.fill:parent; hoverEnabled:true; acceptedButtons:Qt.NoButton
+        onExited:root.hoverIndex=-1
+        onPositionChanged:function(mouse){
+            var wanted=root.historyData.now-root.historyData.seconds+mouse.x/(width-38)*root.historyData.seconds, best=-1, distance=Infinity
+            for(var i=0;i<root.points.length;i++){var d=Math.abs(root.points[i][0]-wanted);if(d<distance){distance=d;best=i}}
+            root.hoverIndex=distance<root.historyData.bucket*3?best:-1
+        }
+    }
+}
