@@ -1,6 +1,5 @@
 import QtQuick
 import Quickshell
-import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
@@ -28,15 +27,17 @@ Item {
         {name: 'Net Pulse',  repo: 'https://github.com/nixfred/omanet.plugin.omarchy',  unit: 'net-pulse.service'}
     ]
 
-    Process {
-        id: opener
-        onExited: function (code) { if (code !== 0) host.actionStatus = 'Could not open that link.' }
-    }
+    // Detached, and the panel closes first — the same thing the ported sections
+    // do. A tracked Process meant a cold browser start could block the shell's
+    // event loop, the page opened behind a popup the same click dismissed, and
+    // a second click was swallowed by the `running` guard while a stale
+    // "Opening…" line still said it had worked. Some xdg-open handlers also
+    // exit non-zero after a successful hand-off, so there is nothing useful to
+    // report either way.
     function openUrl(url) {
-        if (opener.running) return
-        host.actionStatus = 'Opening ' + url + ' in your browser…'
-        opener.command = ['xdg-open', String(url)]
-        opener.running = true
+        if (!url) return
+        host.close()
+        Quickshell.execDetached(['xdg-open', String(url)])
     }
 
     component Label: Text {

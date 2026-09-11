@@ -144,7 +144,16 @@ Panel {
         for (var k in root.settings) next[k] = root.settings[k]
         next[key] = value
         root.settings = next
-        if (root.bar && root.bar.shell) root.bar.shell.updateEntryInline(root.moduleName, root.settings)
+        // updateEntryInline returns false when it cannot find this widget's
+        // entry — which happens when the layout stores it as a bare string
+        // rather than an object, a form the bar itself accepts. The panel
+        // would show the change and lose it on the next restart, so say so
+        // rather than letting it look saved.
+        var saved = root.bar && root.bar.shell
+                  ? root.bar.shell.updateEntryInline(root.moduleName, root.settings) !== false
+                  : false
+        if (!saved) root.actionStatus = 'Changed for now, but it could not be saved to shell.json.'
+        return saved
     }
     function openSection(key) { root.chooseMode = false; root.active = key; root.open() }
     function showPage(key) { root.active = key }
@@ -219,6 +228,10 @@ Panel {
         labelVisible: false
         hasVisualContent: true
         fixedWidth: vertical ? -1 : barRow.implicitWidth + 12
+        // Without this, a left or right bar sizes the button from the hidden
+        // label — about one text line — while the content is a chip plus two
+        // stacked lines, and the entry collapses.
+        fixedHeight: vertical ? barRow.implicitHeight + 12 : -1
         tooltipText: {
             var lines = [root.barAuto ? 'Pulse · following the biggest constraint'
                                       : 'Pulse · pinned to ' + (root.barDomain ? root.barDomain.sectionTitle : root.barSource)]
@@ -365,7 +378,14 @@ Panel {
 
                 Column {
                     id: shell
-                    width: scroller.width - (scroller.contentHeight > scroller.height ? 10 : 0)
+                    // The gutter is reserved unconditionally. Deriving it from
+                    // "is the content taller than the viewport" was a binding
+                    // loop: contentHeight is this Column's implicit height,
+                    // which comes from children whose wrapped text height
+                    // depends on this width. A page landing within 10px of the
+                    // fitted height would drop the gutter, re-wrap a
+                    // paragraph, shrink below the viewport and flip back.
+                    width: scroller.width - 10
                     spacing: 14
 
                     // Header: the product name, and the verdict of whichever

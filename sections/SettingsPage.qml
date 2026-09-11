@@ -167,7 +167,7 @@ Item {
                 required property int index
                 readonly property string key: host.domainKeys[index]
                 width: column.width
-                height: inner.implicitHeight + 20
+                height: inner.implicitHeight + 24   // 12px margins, both sides
                 radius: 14
                 color: root.card
                 border.color: root.cardEdge

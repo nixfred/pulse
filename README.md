@@ -162,7 +162,7 @@ out in two columns rather than one long list.
 | RAM | 933 px |
 | Network | 938 px |
 | CPU | 979 px |
-| Settings | 1022 px |
+| Settings | 1038 px |
 | Disk | 1043 px |
 
 ---
