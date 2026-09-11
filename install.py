@@ -17,6 +17,7 @@ from pathlib import Path
 import datetime
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -51,21 +52,39 @@ def atomic_write(path, payload, mode):
         tmp.unlink(missing_ok=True)
 
 
+def entry_id(entry):
+    """The id of a layout entry, which the shell lets you write either way.
+
+    A bare string is legal in bar.layout — the shell's own BarModel accepts it —
+    so rejecting the file over one would refuse to install on a perfectly valid
+    config.
+    """
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        return entry.get('id')
+    return None
+
+
 def update_layout(raw):
-    data = json.loads(raw)
-    bar = data.get('bar') if isinstance(data, dict) else None
-    layout = bar.get('layout') if isinstance(bar, dict) else None
+    data = json.loads(raw) if raw.strip() else {}
+    if not isinstance(data, dict):
+        raise ValueError('shell.json must contain an object at the top level.')
+    bar = data.setdefault('bar', {})
+    if not isinstance(bar, dict):
+        raise ValueError('shell.json must contain an object at bar.')
+    layout = bar.setdefault('layout', {})
     if not isinstance(layout, dict):
         raise ValueError('shell.json must contain an object at bar.layout.')
     for section in ('left', 'center', 'right'):
-        entries = layout.get(section)
-        if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
-            raise ValueError('bar.layout.' + section + ' must be an array of entry objects.')
+        entries = layout.setdefault(section, [])
+        if not isinstance(entries, list):
+            raise ValueError('bar.layout.' + section + ' must be an array.')
     found = False
     for section in ('left', 'center', 'right'):
         entries = []
         for entry in layout[section]:
-            if entry.get('id') == PLUGIN_ID:
+            if entry_id(entry) == PLUGIN_ID:
                 if found:
                     continue
                 found = True
@@ -153,15 +172,20 @@ def main():
         raise RuntimeError('Resolve symlinked install destinations explicitly '
                            'before installing: ' + ', '.join(linked))
     # Validate the layout before anything is published, so a broken file stops
-    # the install rather than being discovered after the copy.
-    update_layout(config.read_bytes())
-    config_mode = stat.S_IMODE(config.stat().st_mode) & 0o777
+    # the install rather than being discovered after the copy. A machine that
+    # has never run the shell has no shell.json yet, which is a first install,
+    # not an error.
+    config.parent.mkdir(parents=True, exist_ok=True)
+    raw = config.read_bytes() if config.exists() else b'{}'
+    update_layout(raw)
+    config_mode = stat.S_IMODE(config.stat().st_mode) & 0o777 if config.exists() else 0o644
 
     backups = home / '.local/state/omarchy/backups'
     backups.mkdir(parents=True, exist_ok=True)
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     backup = Path(tempfile.mkdtemp(prefix='pulse-' + stamp + '-', dir=backups))
-    shutil.copy2(config, backup / 'shell.json')
+    if config.exists():
+        shutil.copy2(config, backup / 'shell.json')
     if dest.exists():
         shutil.copytree(dest, backup / 'plugin', symlinks=True)
     for unit in UNITS:
@@ -172,28 +196,61 @@ def main():
     # half way through leaves the running release untouched rather than a new
     # Panel.qml beside old sections.
     staging = dest.parent / ('.' + PLUGIN_ID + '.incoming')
+    retired = dest.parent / ('.' + PLUGIN_ID + '.previous')
     shutil.rmtree(staging, ignore_errors=True)
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         staging.mkdir()
         stage(source, staging)
-        retired = dest.parent / ('.' + PLUGIN_ID + '.previous')
         shutil.rmtree(retired, ignore_errors=True)
         if dest.exists():
             dest.rename(retired)
         staging.rename(dest)
-        shutil.rmtree(retired, ignore_errors=True)
+        # `retired` is NOT deleted here. It is the only copy of the release
+        # that was working a second ago, and phase two can still fail.
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         print('Publication failed; the previous release is still in place. '
               'Rollback copies: ' + str(backup))
         raise
 
+    # Everything from here runs with the new tree already live, so a failure
+    # must put the previous one back. Without this, a missing user D-Bus
+    # session (installing over SSH) left the new Panel.qml running with no
+    # collectors and no bar entry, and the installer only printed a path.
+    def unpublish():
+        if not retired.exists():
+            return
+        shutil.rmtree(dest, ignore_errors=True)
+        retired.rename(dest)
+        for unit in UNITS:
+            saved = backup / unit
+            if saved.is_file():
+                shutil.copy2(saved, units / unit)
+        subprocess.run(['systemctl', '--user', 'daemon-reload'],
+                       capture_output=True, timeout=30, check=False)
+        for unit in UNITS:
+            subprocess.run(['systemctl', '--user', 'restart', unit],
+                           capture_output=True, timeout=30, check=False)
+
     try:
         units.mkdir(parents=True, exist_ok=True)
         for unit in UNITS:
             payload = dest / 'collectors' / unit
-            atomic_write(units / unit, payload.read_bytes(),
+            text = payload.read_text()
+            # These units began life in the four plugins Pulse replaces, and
+            # their ExecStart still named those directories. On a machine that
+            # never had them — every new install — all four collectors would
+            # fail to start and every domain would read "recorder offline".
+            # The path is rewritten here as well as in the file, so an edited
+            # or stale unit cannot reintroduce it.
+            domain = unit.split('-')[0]
+            text = re.sub(r'ExecStart=\S+ \S*%h/\.config/omarchy/plugins/\S+?/' + domain + r'_pulse\.py',
+                          'ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/' + PLUGIN_ID
+                          + '/collectors/' + domain + '_pulse.py', text)
+            if (PLUGIN_ID + '/collectors/' + domain + '_pulse.py') not in text:
+                raise RuntimeError('Could not point ' + unit + ' at this plugin\'s collector.')
+            atomic_write(units / unit, text.encode('utf-8'),
                          stat.S_IMODE(payload.stat().st_mode) & 0o777)
         subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True, timeout=30)
         for unit in UNITS:
@@ -208,8 +265,11 @@ def main():
         if not place_through_shell():
             atomic_write(config, update_layout(config.read_bytes()), config_mode)
     except Exception:
-        print('Install did not complete. Rollback copies: ' + str(backup))
+        unpublish()
+        print('Install did not complete; the previous release was put back. '
+              'Rollback copies: ' + str(backup))
         raise
+    shutil.rmtree(retired, ignore_errors=True)
     print('Installed Pulse. Backup: ' + str(backup))
 
 

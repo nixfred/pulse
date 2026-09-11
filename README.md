@@ -155,7 +155,7 @@ out in two columns rather than one long list.
 
 | Page | Height |
 |---|---|
-| About | 543 px |
+| About | 572 px |
 | Overview | 711 px |
 | Chooser | 817 px |
 | Constraints | 925 px |

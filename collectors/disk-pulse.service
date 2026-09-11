@@ -1,11 +1,11 @@
 [Unit]
-Description=Disk Pulse continuous storage history
+Description=Pulse: continuous storage history
 After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/nixfred.disk-pulse/disk_pulse.py daemon
+ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/nixfred.pulse/collectors/disk_pulse.py daemon
 Restart=on-failure
 RestartSec=5
 UMask=0077

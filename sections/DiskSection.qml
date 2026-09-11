@@ -261,7 +261,9 @@ Item {
     // scale is shared across all four domains, so the bar icon and the
     // Constraints page agree on which one is actually the bottleneck.
     readonly property var constraints: Constraints.disk(root.disk, root.mountpoint, root.primary, root.drive, root.stale)
-    readonly property var topConstraint: root.constraints.length ? root.constraints[0] : null
+    // The worst row that is actually a constraint, skipping the rows that only
+    // describe how the machine is set up.
+    readonly property var topConstraint: Constraints.leading(root.constraints)
     readonly property real concern: root.topConstraint ? root.topConstraint.severity : 0
     readonly property string constraintLabel: root.topConstraint ? root.topConstraint.label : 'No constraint'
     readonly property string constraintValue: root.topConstraint ? root.topConstraint.value : '—'

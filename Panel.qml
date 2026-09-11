@@ -6,6 +6,7 @@ import qs.Commons
 import qs.Ui
 import "sections"
 import "Model.js" as Model
+import "sections/Constraints.js" as Constraints
 
 // Pulse — one plugin for CPU, RAM, Disk and Network.
 //
@@ -112,11 +113,17 @@ Panel {
     // In auto mode the second line names the constraint, because the whole
     // promise is that you can tell what changed without opening anything. When
     // pinned it names the readout, because then you already know the domain.
+    // True when nothing on the machine has reached the point of costing you
+    // something you would notice.
+    readonly property bool allClear: !!root.worst && !root.worst.stale && root.worst.concern < Constraints.LOW
     readonly property string barCaption: {
         if (!root.barDomain) return 'WAITING FOR TELEMETRY'
         if (root.barDomain.stale) return root.barDomain.sectionTitle.toUpperCase() + ' · OFFLINE'
-        if (root.barAuto) return root.barDomain.sectionTitle.toUpperCase() + ' · ' + root.barDomain.constraintLabel.toUpperCase()
-        return root.barDomain.sectionTitle.toUpperCase() + ' · ' + root.barDomain.tag
+        if (!root.barAuto) return root.barDomain.sectionTitle.toUpperCase() + ' · ' + root.barDomain.tag
+        // Naming a "constraint" that scores 0.004 makes the icon sound alarmed
+        // about nothing. When nothing is tight, say so.
+        if (root.allClear) return 'ALL CLEAR'
+        return root.barDomain.sectionTitle.toUpperCase() + ' · ' + root.barDomain.constraintLabel.toUpperCase()
     }
     function pinBar(key, mode) {
         // Anything that is not auto or a real domain would persist into
@@ -424,6 +431,7 @@ Panel {
                                     text: {
                                         if (!verdictPill.subject) return 'WAITING FOR TELEMETRY'
                                         if (root.sectionFor(root.active) && !root.chooseMode) return verdictPill.subject.verdict
+                                        if (root.allClear) return 'ALL CLEAR'
                                         return verdictPill.subject.sectionTitle.toUpperCase() + ' · ' + verdictPill.subject.constraintLabel.toUpperCase()
                                     }
                                     color: root.ink

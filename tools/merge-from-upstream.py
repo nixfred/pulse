@@ -29,12 +29,25 @@ SUMMARY={
     readonly property int modeCount: 4
     readonly property string modeHint: 'Choose what lives beside the die. One decimal.'
     function modeLabel(index) { return (index+1)+'.  '+Model.modeName(index)+'   \u00b7   '+Model.readout(root.cpu,index) }
-    readonly property real concern: root.stale ? 1 : Math.max(0, Math.min(1, (root.cpu.busyPct || 0)/100))
+    // What is holding this domain back, ranked worst first. The severity
+    // scale is shared across all four domains, so the bar icon and the
+    // Constraints page agree on which one is actually the bottleneck.
+    readonly property var constraints: Constraints.cpu(root.cpu, root.stale)
+    // The worst row that is actually a constraint, skipping the rows that only
+    // describe how the machine is set up.
+    readonly property var topConstraint: Constraints.leading(root.constraints)
+    readonly property real concern: root.topConstraint ? root.topConstraint.severity : 0
+    readonly property string constraintLabel: root.topConstraint ? root.topConstraint.label : 'No constraint'
+    readonly property string constraintValue: root.topConstraint ? root.topConstraint.value : '\u2014'
+    // Sliced once per data change. Slicing inside a Repeater's model binding
+    // hands it a new array identity on every evaluation, which destroys and
+    // rebuilds every delegate each time.
+    readonly property var topConstraints: root.constraints.slice(0, 3)
     readonly property string headline: root.stale ? '\u2014' : Model.readout(root.cpu, root.mode)
     readonly property string tag: Model.modeTag(root.mode)
     property Component barChip: Component { CpuChip {compact:true;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.tint;stops:root.rampStops;dieFill:Color.background;glint:root.bar?root.bar.foreground:root.ink;animate:!root.stale && root.setting('animated',true)} }
     property Component cardChip: Component { CpuChip {width:88;height:88;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.tint;stops:root.rampStops;dieFill:Color.popups.background;glint:root.ink;animate:root.cardLive} }
-    property Component cardGraph: Component { CpuHistoryGraph {historyData:root.chart;tint:root.tint;heat:root.heat;ink:root.ink;surface:Color.popups.background} }
+    property Component cardGraph: Component { CpuHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;heat:root.heat;ink:root.ink;surface:Color.popups.background} }
 """,
  'Ram': """
     // ---- summary surface ----------------------------------------------
@@ -45,12 +58,25 @@ SUMMARY={
     readonly property int modeCount: 4
     readonly property string modeHint: 'Choose what lives beside the chip. One decimal.'
     function modeLabel(index) { return (index+1)+'.  '+Model.modeName(index)+'   \u00b7   '+Model.readout(root.mem,index) }
-    readonly property real concern: root.stale ? 1 : Math.max(0, Math.min(1, 1 - (root.mem.availablePct || 0)/100))
+    // What is holding this domain back, ranked worst first. The severity
+    // scale is shared across all four domains, so the bar icon and the
+    // Constraints page agree on which one is actually the bottleneck.
+    readonly property var constraints: Constraints.ram(root.mem, root.stale)
+    // The worst row that is actually a constraint, skipping the rows that only
+    // describe how the machine is set up.
+    readonly property var topConstraint: Constraints.leading(root.constraints)
+    readonly property real concern: root.topConstraint ? root.topConstraint.severity : 0
+    readonly property string constraintLabel: root.topConstraint ? root.topConstraint.label : 'No constraint'
+    readonly property string constraintValue: root.topConstraint ? root.topConstraint.value : '\u2014'
+    // Sliced once per data change. Slicing inside a Repeater's model binding
+    // hands it a new array identity on every evaluation, which destroys and
+    // rebuilds every delegate each time.
+    readonly property var topConstraints: root.constraints.slice(0, 3)
     readonly property string headline: root.stale ? '\u2014' : Model.readout(root.mem, root.mode)
     readonly property string tag: root.mode===1||root.mode===2 ? 'USED' : 'AVAILABLE'
     property Component barChip: Component { MemoryChip {compact:true;body:root.themeBg;available:root.mem.availablePct || 0;tint:root.tint;animate:!root.stale && root.setting('animated',true)} }
     property Component cardChip: Component { MemoryChip {width:88;height:88;body:Color.popups.background;available:root.mem.availablePct || 0;tint:root.tint;animate:root.cardLive} }
-    property Component cardGraph: Component { RamHistoryGraph {historyData:root.chart;tint:root.tint;swapTint:root.themeAccent;grid:root.stroke;axisText:root.themeMuted;crosshair:root.strokeStrong;hoverBackground:root.surfaceHover;hoverBorder:root.stroke;hoverForeground:root.themeText;fontFamily:root.themeFont} }
+    property Component cardGraph: Component { RamHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;swapTint:root.themeAccent;grid:root.stroke;axisText:root.themeMuted;crosshair:root.strokeStrong;hoverBackground:root.surfaceHover;hoverBorder:root.stroke;hoverForeground:root.themeText;fontFamily:root.themeFont} }
 """,
  'Net': """
     // ---- summary surface ----------------------------------------------
@@ -61,12 +87,25 @@ SUMMARY={
     readonly property int modeCount: 5
     readonly property string modeHint: 'Choose what lives beside the chip.'
     function modeLabel(index) { return (index+1)+'.  '+Model.modeName(index)+'   \u00b7   '+Model.readout(root.net,index) }
-    readonly property real concern: root.stale ? 1 : Math.max(0, Math.min(1, 1 - (root.health || 0)/100))
+    // What is holding this domain back, ranked worst first. The severity
+    // scale is shared across all four domains, so the bar icon and the
+    // Constraints page agree on which one is actually the bottleneck.
+    readonly property var constraints: Constraints.net(root.net, root.stale)
+    // The worst row that is actually a constraint, skipping the rows that only
+    // describe how the machine is set up.
+    readonly property var topConstraint: Constraints.leading(root.constraints)
+    readonly property real concern: root.topConstraint ? root.topConstraint.severity : 0
+    readonly property string constraintLabel: root.topConstraint ? root.topConstraint.label : 'No constraint'
+    readonly property string constraintValue: root.topConstraint ? root.topConstraint.value : '\u2014'
+    // Sliced once per data change. Slicing inside a Repeater's model binding
+    // hands it a new array identity on every evaluation, which destroys and
+    // rebuilds every delegate each time.
+    readonly property var topConstraints: root.constraints.slice(0, 3)
     readonly property string headline: root.stale ? '\u2014' : Model.readout(root.net, root.mode)
     readonly property string tag: Model.modeTag(root.net, root.mode)
     property Component barChip: Component { NetChip {compact:true;body:Color.bar.background;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint;stops:root.rampStops;animate:!root.stale && root.setting('animated',true)} }
     property Component cardChip: Component { NetChip {width:88;height:88;body:Color.popups.background;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint;stops:root.rampStops;animate:root.cardLive} }
-    property Component cardGraph: Component { NetHistoryGraph {historyData:root.chart;tint:root.tint;latencyTint:root.themeUrgent;upTint:root.themeAccent;axisText:root.dimText;gridLine:root.gridLine;tipBackground:Color.tooltip.background;tipBorder:Color.tooltip.border;tipText:Color.tooltip.text} }
+    property Component cardGraph: Component { NetHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;latencyTint:root.themeUrgent;upTint:root.themeAccent;axisText:root.dimText;gridLine:root.gridLine;tipBackground:Color.tooltip.background;tipBorder:Color.tooltip.border;tipText:Color.tooltip.text} }
 """,
  'Disk': """
     // ---- summary surface ----------------------------------------------
@@ -77,12 +116,25 @@ SUMMARY={
     readonly property int modeCount: 6
     readonly property string modeHint: 'Choose what lives beside the chip. One decimal.'
     function modeLabel(index) { return (index+1)+'.  '+Model.modeName(index)+'   \u00b7   '+Model.readout(root.disk,index,root.mountpoint)+(index===4?'  '+Model.modeTag(root.disk,4):'') }
-    readonly property real concern: root.stale ? 1 : Math.max(0, Math.min(1, 1 - (root.chipFree || 0)/100))
+    // What is holding this domain back, ranked worst first. The severity
+    // scale is shared across all four domains, so the bar icon and the
+    // Constraints page agree on which one is actually the bottleneck.
+    readonly property var constraints: Constraints.disk(root.disk, root.mountpoint, root.primary, root.drive, root.stale)
+    // The worst row that is actually a constraint, skipping the rows that only
+    // describe how the machine is set up.
+    readonly property var topConstraint: Constraints.leading(root.constraints)
+    readonly property real concern: root.topConstraint ? root.topConstraint.severity : 0
+    readonly property string constraintLabel: root.topConstraint ? root.topConstraint.label : 'No constraint'
+    readonly property string constraintValue: root.topConstraint ? root.topConstraint.value : '\u2014'
+    // Sliced once per data change. Slicing inside a Repeater's model binding
+    // hands it a new array identity on every evaluation, which destroys and
+    // rebuilds every delegate each time.
+    readonly property var topConstraints: root.constraints.slice(0, 3)
     readonly property string headline: root.stale ? '\u2014' : Model.readout(root.disk, root.mode, root.mountpoint)
     readonly property string tag: Model.modeTag(root.disk, root.mode)
     property Component barChip: Component { DiskChip {compact:true;body:root.themeBg;glint:root.barForeground;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.tint;animate:!root.stale && root.setting('animated',true)} }
     property Component cardChip: Component { DiskChip {width:88;height:88;body:Color.popups.background;glint:root.themeText;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.tint;animate:root.cardLive} }
-    property Component cardGraph: Component { DiskHistoryGraph {historyData:root.chart;tint:root.tint;writeTint:root.themeAccent;busyTint:root.rampWarn;usedTint:root.themeText;grid:root.stroke;axisText:root.themeMuted;crosshair:root.strokeStrong;hoverBackground:root.surfaceHover;hoverBorder:root.stroke;hoverForeground:root.themeText;fontFamily:root.themeFont} }
+    property Component cardGraph: Component { DiskHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;writeTint:root.themeAccent;busyTint:root.rampWarn;usedTint:root.themeText;grid:root.stroke;axisText:root.themeMuted;crosshair:root.strokeStrong;hoverBackground:root.surfaceHover;hoverBorder:root.stroke;hoverForeground:root.themeText;fontFamily:root.themeFont} }
 """,
 }
 
@@ -134,6 +186,9 @@ def fix_head(text,key):
     text=re.sub(r"^\s*moduleName:.*\n",'',text,flags=re.M)
     text=re.sub(r"^\s*ipcTarget:.*\n",'',text,flags=re.M)
     text=re.sub(r"^\s*manageIpc:.*\n",'',text,flags=re.M)
+    # Hidden width-floor labels measured the old per-plugin bar readout, whose
+    # Text ids went with the bar row. One icon sizes itself, so they are orphans.
+    text=re.sub(r'^\s*Text \{ id:(readoutFloor|tagFloor);.*\n','',text,flags=re.M)
     # the merged section owns the sub-tab list (About moved to its own page)
     text=re.sub(r'^\s*readonly property var tabs:.*\n','',text,flags=re.M)
     text=re.sub(r'^\s*readonly property int lastTab:.*\n','',text,flags=re.M)
@@ -183,7 +238,8 @@ for name,sp in SPEC.items():
     about='\n'.join(lines[rest_start:rest_end+1])
 
     imports=['import QtQuick']+sp['extra_imports']+['import Quickshell','import Quickshell.Io',
-             'import qs.Commons','import qs.Ui','import "../model/%sModel.js" as Model'%name]
+             'import qs.Commons','import qs.Ui','import "../model/%sModel.js" as Model'%name,
+             'import "Constraints.js" as Constraints']
     tabs_js='['+','.join("'%s'"%t for t in sp['tabs'])+']'
 
     out=f'''{chr(10).join(imports)}
@@ -257,6 +313,119 @@ for f in glob.glob(os.path.join(DST,'sections','*Section.qml')):
                 "    readonly property string moduleName: host.moduleName\n    readonly property var bar: host.bar")
     open(f,'w').write(t)
 print('fixups applied')
+
+
+# ---- compact graphs ----------------------------------------------------
+# The four history graphs reserve a left/right gutter and a bottom strip for
+# axis labels sized for a 139px-tall chart. On the Overview cards they are
+# drawn at 106px, where that furniture collides with the trace. `axesVisible`
+# turns the labels off and hands the gutters back to the plot, so the card
+# shows the same data with none of the scaffolding. It defaults to true, so
+# every full-size use is untouched.
+GRAPH_AXES = {
+    'CpuHistoryGraph': [
+        ("            var c=getContext('2d'), w=width-38, h=height-26",
+         "            var gutter=root.axesVisible?38:0, foot=root.axesVisible?26:4\n"
+         "            var c=getContext('2d'), w=width-gutter, h=height-foot"),
+        ("                c.fillStyle=root.axis;c.fillText(String(100-line*25),width,y+3)",
+         "                if(root.axesVisible){c.fillStyle=root.axis;c.fillText(String(100-line*25),width,y+3)}"),
+        ("            c.fillStyle=root.axis;c.textAlign='left';c.fillText(root.historyData.seconds===3600?'1 hour ago':root.historyData.seconds===86400?'24 hours ago':'7 days ago',0,height-3)\n"
+         "            c.textAlign='right';c.fillText('now',w,height-3)",
+         "            if(root.axesVisible){\n"
+         "                c.fillStyle=root.axis;c.textAlign='left';c.fillText(root.historyData.seconds===3600?'1 hour ago':root.historyData.seconds===86400?'24 hours ago':'7 days ago',0,height-3)\n"
+         "                c.textAlign='right';c.fillText('now',w,height-3)\n"
+         "            }"),
+    ],
+    'RamHistoryGraph': [
+        ("            var c=getContext('2d'), w=width-38, h=height-26",
+         "            var gutter=root.axesVisible?38:0, foot=root.axesVisible?26:4\n"
+         "            var c=getContext('2d'), w=width-gutter, h=height-foot"),
+        ("                c.fillStyle=root.axisText;c.fillText(String(100-line*25)+'%',width,y+3)",
+         "                if(root.axesVisible){c.fillStyle=root.axisText;c.fillText(String(100-line*25)+'%',width,y+3)}"),
+        ("            c.fillStyle=root.axisText;c.textAlign='left';c.fillText(root.historyData.seconds===3600?'1 hour ago':root.historyData.seconds===86400?'24 hours ago':'7 days ago',0,height-3)\n"
+         "            c.textAlign='right';c.fillText('now',w,height-3)",
+         "            if(root.axesVisible){\n"
+         "                c.fillStyle=root.axisText;c.textAlign='left';c.fillText(root.historyData.seconds===3600?'1 hour ago':root.historyData.seconds===86400?'24 hours ago':'7 days ago',0,height-3)\n"
+         "                c.textAlign='right';c.fillText('now',w,height-3)\n"
+         "            }"),
+    ],
+    'NetHistoryGraph': [
+        ("    readonly property int leftAxis: 52", "    readonly property int leftAxis: axesVisible ? 52 : 0"),
+        ("    readonly property int rightAxis: 40", "    readonly property int rightAxis: axesVisible ? 40 : 0"),
+        ("            var c=getContext('2d'), w=root.plotWidth(), h=height-26, x0=root.leftAxis",
+         "            var c=getContext('2d'), w=root.plotWidth(), h=height-(root.axesVisible?26:4), x0=root.leftAxis"),
+        ("                c.fillStyle=root.axisText;c.textAlign='right';c.fillText(Model.shortRate(root.ceiling*(1-line/4))+'/s',x0-4,y+3)\n"
+         "                c.fillStyle=root.latencyTint;c.textAlign='left';c.fillText(Math.round(root.msCeiling*(1-line/4))+'ms',x0+w+4,y+3)",
+         "                if(root.axesVisible){\n"
+         "                    c.fillStyle=root.axisText;c.textAlign='right';c.fillText(Model.shortRate(root.ceiling*(1-line/4))+'/s',x0-4,y+3)\n"
+         "                    c.fillStyle=root.latencyTint;c.textAlign='left';c.fillText(Math.round(root.msCeiling*(1-line/4))+'ms',x0+w+4,y+3)\n"
+         "                }"),
+        ("            c.fillStyle=root.axisText;c.textAlign='left';c.fillText(root.historyData.seconds===3600?'1 hour ago':root.historyData.seconds===86400?'24 hours ago':'7 days ago',x0,height-3)\n"
+         "            c.textAlign='right';c.fillText('now',x0+w,height-3)",
+         "            if(root.axesVisible){\n"
+         "                c.fillStyle=root.axisText;c.textAlign='left';c.fillText(root.historyData.seconds===3600?'1 hour ago':root.historyData.seconds===86400?'24 hours ago':'7 days ago',x0,height-3)\n"
+         "                c.textAlign='right';c.fillText('now',x0+w,height-3)\n"
+         "            }"),
+    ],
+    'DiskHistoryGraph': [
+        ("    readonly property int leftAxis: 46", "    readonly property int leftAxis: axesVisible ? 46 : 0"),
+        ("    readonly property int rightAxis: 34", "    readonly property int rightAxis: axesVisible ? 34 : 0"),
+        ("            var c=getContext('2d'), w=root.plotWidth(), h=height-26, x0=root.leftAxis",
+         "            var c=getContext('2d'), w=root.plotWidth(), h=height-(root.axesVisible?26:4), x0=root.leftAxis"),
+        ("                c.fillStyle=root.axisText;c.textAlign='right';c.fillText(Model.shortRate(root.ceiling*(1-line/4))+'/s',x0-4,y+3)\n"
+         "                c.textAlign='left';c.fillText(String(100-line*25)+'%',x0+w+4,y+3)",
+         "                if(root.axesVisible){\n"
+         "                    c.fillStyle=root.axisText;c.textAlign='right';c.fillText(Model.shortRate(root.ceiling*(1-line/4))+'/s',x0-4,y+3)\n"
+         "                    c.textAlign='left';c.fillText(String(100-line*25)+'%',x0+w+4,y+3)\n"
+         "                }"),
+        ("            c.fillStyle=root.axisText;c.textAlign='left';c.fillText(root.historyData.seconds===3600?'1 hour ago':root.historyData.seconds===86400?'24 hours ago':'7 days ago',x0,height-3)\n"
+         "            c.textAlign='right';c.fillText('now',x0+w,height-3)",
+         "            if(root.axesVisible){\n"
+         "                c.fillStyle=root.axisText;c.textAlign='left';c.fillText(root.historyData.seconds===3600?'1 hour ago':root.historyData.seconds===86400?'24 hours ago':'7 days ago',x0,height-3)\n"
+         "                c.textAlign='right';c.fillText('now',x0+w,height-3)\n"
+         "            }"),
+    ],
+}
+# Chips, graphs and domain models are copied fresh from the installed plugins
+# on every run, so this script is idempotent and re-running it picks up any
+# upstream change rather than patching an already-patched file.
+ASSETS = [
+    ('nixfred.cpu-pulse',  'CpuChip.qml',      'CpuChip.qml'),
+    ('nixfred.cpu-pulse',  'HistoryGraph.qml', 'CpuHistoryGraph.qml'),
+    ('nixfred.cpu-pulse',  'Model.js',         'CpuModel.js'),
+    ('nixfred.ram-pulse',  'MemoryChip.qml',   'MemoryChip.qml'),
+    ('nixfred.ram-pulse',  'HistoryGraph.qml', 'RamHistoryGraph.qml'),
+    ('nixfred.ram-pulse',  'Model.js',         'RamModel.js'),
+    ('nixfred.net-pulse',  'NetChip.qml',      'NetChip.qml'),
+    ('nixfred.net-pulse',  'UsageGraph.qml',   'UsageGraph.qml'),
+    ('nixfred.net-pulse',  'HistoryGraph.qml', 'NetHistoryGraph.qml'),
+    ('nixfred.net-pulse',  'Model.js',         'NetModel.js'),
+    ('nixfred.disk-pulse', 'DiskChip.qml',     'DiskChip.qml'),
+    ('nixfred.disk-pulse', 'HistoryGraph.qml', 'DiskHistoryGraph.qml'),
+    ('nixfred.disk-pulse', 'Model.js',         'DiskModel.js'),
+]
+import shutil as _sh
+for pid, src_name, dst_name in ASSETS:
+    _sh.copyfile(os.path.join(SRC, pid, src_name), os.path.join(DST, 'sections', dst_name))
+print('assets refreshed from upstream plugins')
+
+for stem, edits in GRAPH_AXES.items():
+    f = os.path.join(DST, 'sections', stem + '.qml')
+    t = open(f).read()
+    for old, new in edits:
+        if old not in t:
+            raise SystemExit('axis patch missed in %s:\n%s' % (stem, old[:90]))
+        t = t.replace(old, new, 1)
+    anchor = '    property var historyData'
+    t = t.replace(anchor,
+                  '    // False drops the axis labels and their gutters, for the Overview\n'
+                  '    // cards where the chart is too short to carry them.\n'
+                  '    property bool axesVisible: true\n' + anchor, 1)
+    t = t.replace('        onWidthChanged: root.repaint()',
+                  '        onWidthChanged: root.repaint()\n'
+                  '        Connections { target: root; function onAxesVisibleChanged() { root.repaint() } }', 1)
+    open(f, 'w').write(t)
+print('graph axes made optional')
 
 # Chips and graphs each import their own domain model by name, so the four
 # copies can share one directory without one shadowing another.

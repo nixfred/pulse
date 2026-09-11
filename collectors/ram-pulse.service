@@ -1,11 +1,11 @@
 [Unit]
-Description=RAM Pulse continuous memory history
+Description=Pulse: continuous memory history
 After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/nixfred.ram-pulse/ram_pulse.py daemon
+ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/nixfred.pulse/collectors/ram_pulse.py daemon
 Restart=on-failure
 RestartSec=5
 UMask=0077

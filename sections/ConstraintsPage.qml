@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "Constraints.js" as C
 
 // Where this machine is actually weak.
 //
@@ -81,7 +82,7 @@ Item {
         Column {
             width: parent.width
             spacing: 4
-            Heading { text: 'BIGGEST CONSTRAINT'; font.letterSpacing: 1.5 }
+            Heading { text: host.allClear ? 'NOTHING IS TIGHT' : 'BIGGEST CONSTRAINT'; font.letterSpacing: 1.5 }
             Row {
                 spacing: 10
                 Text {
@@ -94,8 +95,9 @@ Item {
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.ranked.length && root.ranked[0].topConstraint
-                          ? root.ranked[0].constraintLabel + ' · ' + root.ranked[0].constraintValue : ''
+                    text: !root.ranked.length ? ''
+                          : host.allClear ? 'is the closest to a limit, and it is not close'
+                          : root.ranked[0].topConstraint ? root.ranked[0].constraintLabel + ' · ' + root.ranked[0].constraintValue : ''
                     color: root.ink
                     font.pixelSize: 15
                     textFormat: Text.PlainText
@@ -104,7 +106,9 @@ Item {
             Label {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: root.ranked.length && root.ranked[0].topConstraint ? root.ranked[0].topConstraint.detail : ''
+                text: !root.ranked.length ? ''
+                      : host.allClear ? 'No reading on this machine has reached the point of costing you something you would notice. The rows below are still ranked, so you can see what would give first.'
+                      : root.ranked[0].topConstraint ? root.ranked[0].topConstraint.detail : ''
             }
             Label {
                 width: parent.width
@@ -212,7 +216,10 @@ Item {
                                 spacing: 1
                                 Text {
                                     width: parent.width
-                                    text: modelData.label
+                                    // Rows that describe the setup rather than
+                                    // a limit are marked, so a reader can see
+                                    // why they never win the ranking.
+                                    text: modelData.label + (modelData.informational ? '  (setup)' : '')
                                     color: root.ink
                                     font.pixelSize: 11
                                     font.bold: true

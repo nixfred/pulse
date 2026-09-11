@@ -53,10 +53,24 @@ function band(severity) {
     return severity >= HIGH ? 'critical' : severity >= MEDIUM ? 'tight' : severity >= LOW ? 'noticeable' : 'comfortable'
 }
 
-function entry(key, label, value, detail, severity) {
+function entry(key, label, value, detail, severity, informational) {
     var s = Math.min(clamp01(severity), CEILING)
+    // An informational row still shows and still sorts, but it can never be
+    // the thing the bar icon names. zram doing its job, a machine with no
+    // swapfile, and a deliberately chosen power profile are all facts about
+    // the setup rather than something holding the machine back — and each of
+    // them outscored every real reading on an idle machine, so the icon spent
+    // its time announcing that nothing was wrong.
     return {key: key, label: label, value: value, detail: detail,
-            severity: s, band: band(s)}
+            severity: s, band: band(s), informational: !!informational}
+}
+
+// The worst row that is actually a constraint. Falls back to the worst row of
+// any kind, so a domain whose every reading is informational still says
+// something rather than nothing.
+function leading(list) {
+    for (var i = 0; i < list.length; i++) if (!list[i].informational) return list[i]
+    return list.length ? list[0] : null
 }
 
 function offline(domain, unit) {
@@ -121,7 +135,7 @@ function cpu(c, stale) {
 
     if (c.profile === 'power-saver') {
         out.push(entry('profile', 'Power profile', 'power-saver',
-            'The machine is deliberately capped. This is a constraint you chose, and switching to balanced lifts it.', 0.4))
+            'The machine is deliberately capped. This is a constraint you chose, and switching to balanced lifts it.', 0.4, true))
     }
     // throttle is {package, core} counters, not a flag. Testing the object
     // itself is always true, which reported a permanent clock cap on a machine
@@ -162,7 +176,7 @@ function ram(m, stale) {
         !diskTotal ? 'There is no swapfile, so memory pressure has nowhere to go but reclaim and the OOM killer.'
                    : swapRatio > 0.05 ? 'Pages have been written out to storage. Touching them again costs a disk read instead of a memory read.'
                                       : 'Nothing meaningful has been written out to storage.',
-        diskTotal ? ramp(swapRatio, 0.05, 0.6) : 0.3))
+        diskTotal ? ramp(swapRatio, 0.05, 0.6) : 0.3, !diskTotal))
 
     out.push(entry('pressure', 'Memory pressure', pct(some.avg60),
         'The share of the last minute spent waiting on memory reclaim. This is the number that turns into stutter.',
@@ -181,7 +195,7 @@ function ram(m, stale) {
         out.push(entry('zram', 'Held in compressed swap', size(held) + ' of RAM'
                        + (ratio > 1 ? ' holding ' + size(z.original) + ' (' + ratio.toFixed(1) + 'x)' : ''),
             'zram absorbs pressure in RAM rather than on disk. It buys headroom, at the cost of CPU to compress and of the RAM it occupies.',
-            ramp(held / m.total, 0.15, 0.5)))
+            ramp(held / m.total, 0.15, 0.5), true))
     }
     return rank(out)
 }

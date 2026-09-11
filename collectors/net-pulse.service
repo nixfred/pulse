@@ -1,11 +1,11 @@
 [Unit]
-Description=Net Pulse continuous network history
+Description=Pulse: continuous network history
 After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/nixfred.net-pulse/net_pulse.py daemon
+ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/nixfred.pulse/collectors/net_pulse.py daemon
 Restart=on-failure
 RestartSec=5
 UMask=0077
