@@ -150,9 +150,11 @@ out in two columns rather than one long list.
 | Overview | 711 px |
 | Chooser | 817 px |
 | Constraints | 925 px |
+| RAM | 933 px |
 | Network | 938 px |
 | CPU | 979 px |
 | Settings | 1022 px |
+| Disk | 1043 px |
 
 ---
 

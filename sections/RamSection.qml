@@ -186,6 +186,10 @@ Item {
     readonly property real concern: root.topConstraint ? root.topConstraint.severity : 0
     readonly property string constraintLabel: root.topConstraint ? root.topConstraint.label : 'No constraint'
     readonly property string constraintValue: root.topConstraint ? root.topConstraint.value : '—'
+    // Sliced once per data change. Slicing inside a Repeater's model binding
+    // hands it a new array identity on every evaluation, which destroys and
+    // rebuilds every delegate each time.
+    readonly property var topConstraints: root.constraints.slice(0, 3)
     readonly property string headline: root.stale ? '—' : Model.readout(root.mem, root.mode)
     readonly property string tag: root.mode===1||root.mode===2 ? 'USED' : 'AVAILABLE'
     property Component barChip: Component { MemoryChip {compact:true;body:root.themeBg;available:root.mem.availablePct || 0;tint:root.tint;animate:!root.stale && root.setting('animated',true)} }

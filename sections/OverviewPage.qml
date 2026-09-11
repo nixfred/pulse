@@ -136,12 +136,13 @@ Item {
 
                 MouseArea {
                     anchors.fill: parent
-                    hoverEnabled: true
+                    // Deliberately NOT hoverEnabled. A hover-enabled MouseArea
+                    // is the topmost item accepting hover, so it would swallow
+                    // every move event before the graph's own area could draw
+                    // its crosshair — propagateComposedEvents forwards clicks,
+                    // not hovers. cursorShape still works without it.
                     cursorShape: Qt.PointingHandCursor
-                    // The graph underneath wants the hover for its crosshair,
-                    // so this only claims the click.
                     acceptedButtons: Qt.LeftButton
-                    propagateComposedEvents: true
                     onClicked: function (mouse) { host.showPage(cardRect.key) }
                 }
             }

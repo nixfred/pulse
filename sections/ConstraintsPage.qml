@@ -27,11 +27,27 @@ Item {
 
     // Domains worst first. The ranking is the finding, so the page is ordered
     // by it rather than by a fixed CPU/RAM/Disk/Net order that would bury it.
-    readonly property var ranked: {
+    // Recomputed only while the page is on screen, and only when a severity
+    // actually moves. A sort inside a Repeater's model binding returns a new
+    // array identity on every evaluation, which tears down all four cards —
+    // and it was doing that every couple of seconds behind a page nobody was
+    // looking at.
+    property var ranked: []
+    function rerank() {
+        if (!root.visible) return
         var list = []
         for (var i = 0; i < host.domains.length; i++) if (host.domains[i]) list.push(host.domains[i])
-        return list.sort(function (a, b) { return b.concern - a.concern })
+        list.sort(function (a, b) { return b.concern - a.concern })
+        if (list.length === root.ranked.length) {
+            var same = true
+            for (var j = 0; j < list.length; j++) if (list[j] !== root.ranked[j]) { same = false; break }
+            if (same) return
+        }
+        root.ranked = list
     }
+    onVisibleChanged: root.rerank()
+    Component.onCompleted: root.rerank()
+    Timer { interval: 2000; running: root.visible; repeat: true; onTriggered: root.rerank() }
     // One colour scale for severity, independent of any domain's own tint, so
     // a red bar means the same thing in every row on the page.
     function severityColor(severity) {
@@ -163,8 +179,10 @@ Item {
                     Repeater {
                         // The top few only. A domain's fifth-worst reading is
                         // not a finding, and the page has to fit on one screen
-                        // to be read at a glance at all.
-                        model: block.modelData.constraints.slice(0, 3)
+                        // to be read at a glance at all. The slice is cached on
+                        // the section, so the delegates are not rebuilt on
+                        // every binding evaluation.
+                        model: block.modelData.topConstraints
                         Row {
                             required property var modelData
                             width: inner.width

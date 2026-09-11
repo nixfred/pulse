@@ -16,6 +16,11 @@
 var LOW = 0.34        // worth knowing
 var MEDIUM = 0.62     // worth acting on soon
 var HIGH = 0.85       // acting on now
+// A live reading can reach 0.97 but never 1. Only `offline` scores 1, so a
+// stopped recorder always outranks a saturated one. Without this, a RAM stall
+// average that pinned its ramp tied at 1.00 with a dead collector, and the
+// tie-break — first domain wins — meant the dead one could never take the icon.
+var CEILING = 0.97
 
 function clamp01(n) {
     if (typeof n !== 'number' || !isFinite(n)) return 0
@@ -49,13 +54,33 @@ function band(severity) {
 }
 
 function entry(key, label, value, detail, severity) {
+    var s = Math.min(clamp01(severity), CEILING)
     return {key: key, label: label, value: value, detail: detail,
-            severity: clamp01(severity), band: band(clamp01(severity))}
+            severity: s, band: band(s)}
 }
 
 function offline(domain, unit) {
-    return [entry('offline', 'Recorder offline', 'no telemetry',
-                  'Nothing has been recorded for this domain recently. Check ' + unit + '.', 1)]
+    // Built directly rather than through entry(), because this is the one
+    // reading allowed to score a full 1.
+    return [{key: 'offline', label: 'Recorder offline', value: 'no telemetry',
+             detail: 'Nothing has been recorded for this domain recently. Check ' + unit + '.',
+             severity: 1, band: 'critical'}]
+}
+
+// The mean of a ping series is dominated by a single stall. 23 samples between
+// 0.4 and 2.3 ms plus one 565 ms outlier averages to 24 ms, which reads as a
+// problem on a link that is fine. The median describes the typical packet.
+function median(values, fallback) {
+    if (!values || !values.length) return fallback
+    var sorted = [], i
+    for (i = 0; i < values.length; i++) {
+        var n = Number(values[i])
+        if (isFinite(n)) sorted.push(n)
+    }
+    if (!sorted.length) return fallback
+    sorted.sort(function (a, b) { return a - b })
+    var mid = Math.floor(sorted.length / 2)
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
 function rank(list) {
@@ -88,7 +113,7 @@ function cpu(c, stale) {
 
     out.push(entry('thermal', 'Package temperature', deg(c.temp),
         'Sustained heat is what makes a laptop clock down. Above 90°C the processor is trading speed for survival.',
-        ramp(c.temp, 70, 95)))
+        ramp(c.temp, 80, 95)))
 
     out.push(entry('pressure', 'Scheduler pressure', pct(some.avg60),
         'The share of the last minute that something spent waiting for a core rather than running. This is contention you can feel.',
@@ -145,7 +170,7 @@ function ram(m, stale) {
 
     out.push(entry('stall', 'Full stalls', pct(full.avg60),
         'Time where every task was blocked on memory at once. Anything sustained here is the machine grinding.',
-        ramp(full.avg60, 0, 5)))
+        ramp(full.avg60, 0, 20)))
 
     // zram reports {original, physical}: the logical bytes stored and the RAM
     // they actually occupy after compression. There is no total/used pair.
@@ -171,6 +196,26 @@ function disk(d, mountpoint, primary, drive, stale) {
         out.push(entry('space', 'Free space on ' + (primary.mount || mountpoint), pct(primary.freePct),
             size(primary.free) + ' left of ' + size(primary.total) + '. Under a fifth free, allocation slows and a filesystem like btrfs starts working harder to find room.',
             ramp(primary.freePct, 20, 0)))
+    }
+
+    // The bar follows one filesystem, but a full /boot stops an update whether
+    // or not you happen to be watching it. Score the tightest of the others
+    // too. Remote mounts are skipped: a full rclone target is not this
+    // machine's constraint and its free space can be nonsense.
+    var tightest = null
+    var mounts = d.filesystems || []
+    for (var f = 0; f < mounts.length; f++) {
+        var fs = mounts[f]
+        if (!fs || fs.remote) continue
+        if (primary && fs.mount === primary.mount) continue
+        if (typeof fs.freePct !== 'number') continue
+        if (!tightest || fs.freePct < tightest.freePct) tightest = fs
+    }
+    if (tightest) {
+        out.push(entry('othermount', 'Free space on ' + tightest.mount, pct(tightest.freePct),
+            size(tightest.free) + ' left of ' + size(tightest.total) + ' on ' + (tightest.fstype || 'this filesystem')
+            + '. The bar follows ' + (primary ? primary.mount : mountpoint) + ', so this one fills without ever changing the chip.',
+            ramp(tightest.freePct, 20, 0)))
     }
 
     var rates = drive && drive.rates ? drive.rates : {}
@@ -220,9 +265,10 @@ function net(n, stale) {
             'There is a route, but the usual checks are not coming back clean. A captive portal or a filtered DNS will look like this.', 0.8))
     }
 
-    out.push(entry('latency', 'Internet round trip', ms(ping.internet),
-        'How long a packet takes to reach ' + (ping.probe || 'the probe target') + ' and return. Everything interactive is built on top of this number.',
-        ramp(ping.internet, 40, 200)))
+    var internetTypical = median(ping.internetSamples, ping.internet)
+    out.push(entry('latency', 'Internet round trip', ms(internetTypical),
+        'How long the median packet takes to reach ' + (ping.probe || 'the probe target') + ' and return. Everything interactive is built on top of this number.',
+        ramp(internetTypical, 40, 200)))
 
     out.push(entry('loss', 'Packet loss', pct(ping.loss),
         'Lost packets are re-sent, so loss costs far more than its percentage suggests.',
@@ -234,9 +280,10 @@ function net(n, stale) {
             ramp(wifi.quality, 60, 0)))
     }
 
-    out.push(entry('gateway', 'Gateway round trip', ms(ping.gateway),
-        'The first hop. Latency here is your own network, not the internet, so it separates a slow link from a slow world.',
-        ramp(ping.gateway, 5, 60)))
+    var gatewayTypical = median(ping.gatewaySamples, ping.gateway)
+    out.push(entry('gateway', 'Gateway round trip', ms(gatewayTypical),
+        'The first hop, as the median packet sees it. Latency here is your own network, not the internet, so it separates a slow link from a slow world.',
+        ramp(gatewayTypical, 5, 60)))
 
     return rank(out)
 }

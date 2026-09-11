@@ -32,7 +32,12 @@ Panel {
     // are the merged pages.
     property string active: 'overview'
     property bool chooseMode: false
+    // A status line is a reply to something you just did, so it expires. Left
+    // standing it becomes furniture, and the next person to open the panel
+    // reads a stale answer to a question they never asked.
     property string actionStatus: ''
+    onActionStatusChanged: if (actionStatus !== '') statusExpiry.restart()
+    Timer { id: statusExpiry; interval: 8000; onTriggered: root.actionStatus = '' }
     readonly property var pages: [
         {key: 'overview',    label: 'Overview'},
         {key: 'constraints', label: 'Constraints'},
@@ -78,7 +83,10 @@ Panel {
     // the merge: the icon becomes whichever domain is currently the biggest
     // constraint, and says so. Anything else is a pin the user chose from the
     // right-click chooser, and it stays put.
-    readonly property string barSource: String(root.setting('barSource', 'auto'))
+    readonly property string barSource: {
+        var stored = String(root.setting('barSource', 'auto'))
+        return stored === 'auto' || root.domainKeys.indexOf(stored) >= 0 ? stored : 'auto'
+    }
     readonly property bool barAuto: root.barSource === 'auto'
     // Auto follows `worst`, but not instantly. Two domains sitting a hair
     // apart would otherwise trade the icon back and forth every few seconds,
@@ -111,6 +119,13 @@ Panel {
         return root.barDomain.sectionTitle.toUpperCase() + ' · ' + root.barDomain.tag
     }
     function pinBar(key, mode) {
+        // Anything that is not auto or a real domain would persist into
+        // shell.json and leave the panel saying "pinned to bogus" with the icon
+        // silently behaving as auto and no control able to clear it.
+        if (key !== 'auto' && root.domainKeys.indexOf(key) < 0) {
+            root.actionStatus = 'No such readout: ' + key
+            return
+        }
         root.setSetting('barSource', key)
         if (key !== 'auto') {
             var s = root.sectionFor(key)
