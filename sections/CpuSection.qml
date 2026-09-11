@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "CpuModel.js" as Model
+import "Constraints.js" as Constraints
 
 // CPU section of Pulse — the whole of nixfred.cpu-pulse's dashboard, hosted
 // inside the merged panel. Everything below the host bridge is the original
@@ -138,12 +139,19 @@ Item {
     readonly property int modeCount: 4
     readonly property string modeHint: 'Choose what lives beside the die. One decimal.'
     function modeLabel(index) { return (index+1)+'.  '+Model.modeName(index)+'   ·   '+Model.readout(root.cpu,index) }
-    readonly property real concern: root.stale ? 1 : Math.max(0, Math.min(1, (root.cpu.busyPct || 0)/100))
+    // What is holding this domain back, ranked worst first. The severity
+    // scale is shared across all four domains, so the bar icon and the
+    // Constraints page agree on which one is actually the bottleneck.
+    readonly property var constraints: Constraints.cpu(root.cpu, root.stale)
+    readonly property var topConstraint: root.constraints.length ? root.constraints[0] : null
+    readonly property real concern: root.topConstraint ? root.topConstraint.severity : 0
+    readonly property string constraintLabel: root.topConstraint ? root.topConstraint.label : 'No constraint'
+    readonly property string constraintValue: root.topConstraint ? root.topConstraint.value : '—'
     readonly property string headline: root.stale ? '—' : Model.readout(root.cpu, root.mode)
     readonly property string tag: Model.modeTag(root.mode)
     property Component barChip: Component { CpuChip {compact:true;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.tint;stops:root.rampStops;dieFill:Color.background;glint:root.bar?root.bar.foreground:root.ink;animate:!root.stale && root.setting('animated',true)} }
     property Component cardChip: Component { CpuChip {width:88;height:88;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.tint;stops:root.rampStops;dieFill:Color.popups.background;glint:root.ink;animate:root.cardLive} }
-    property Component cardGraph: Component { CpuHistoryGraph {historyData:root.chart;tint:root.tint;heat:root.heat;ink:root.ink;surface:Color.popups.background} }
+    property Component cardGraph: Component { CpuHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;heat:root.heat;ink:root.ink;surface:Color.popups.background} }
 
     component Label: Text {
         color:root.inkDim;font.pixelSize:12;textFormat:Text.PlainText

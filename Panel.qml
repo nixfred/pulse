@@ -34,7 +34,8 @@ Panel {
     property bool chooseMode: false
     property string actionStatus: ''
     readonly property var pages: [
-        {key: 'overview', label: 'Overview'},
+        {key: 'overview',    label: 'Overview'},
+        {key: 'constraints', label: 'Constraints'},
         {key: 'cpu',      label: 'CPU'},
         {key: 'ram',      label: 'RAM'},
         {key: 'disk',     label: 'Disk'},
@@ -73,7 +74,49 @@ Panel {
         return pick
     }
 
-    function chipEnabled(key) { return !!root.setting(key + '.inBar', true) }
+    // What the single bar icon shows. 'auto' is the default and the point of
+    // the merge: the icon becomes whichever domain is currently the biggest
+    // constraint, and says so. Anything else is a pin the user chose from the
+    // right-click chooser, and it stays put.
+    readonly property string barSource: String(root.setting('barSource', 'auto'))
+    readonly property bool barAuto: root.barSource === 'auto'
+    // Auto follows `worst`, but not instantly. Two domains sitting a hair
+    // apart would otherwise trade the icon back and forth every few seconds,
+    // which reads as a fault rather than as information. The leader has to be
+    // clearly ahead to take it — except when a recorder goes offline, which
+    // always wins, because that is the one thing you must not miss.
+    readonly property real switchMargin: 0.08
+    property string autoKey: ''
+    readonly property var autoDomain: root.sectionFor(root.autoKey) || root.worst
+    function refreshAutoKey() {
+        var leader = root.worst
+        if (!leader) return
+        var current = root.sectionFor(root.autoKey)
+        if (!current || leader === current) { root.autoKey = leader.prefix; return }
+        if (leader.stale && !current.stale) { root.autoKey = leader.prefix; return }
+        if (leader.concern > current.concern + root.switchMargin) root.autoKey = leader.prefix
+    }
+    Component.onCompleted: root.refreshAutoKey()
+    Timer { interval: 2000; running: true; repeat: true; onTriggered: root.refreshAutoKey() }
+
+    readonly property var barDomain: root.barAuto ? root.autoDomain : (root.sectionFor(root.barSource) || root.autoDomain)
+    readonly property string barKey: root.barDomain ? root.barDomain.prefix : 'cpu'
+    // In auto mode the second line names the constraint, because the whole
+    // promise is that you can tell what changed without opening anything. When
+    // pinned it names the readout, because then you already know the domain.
+    readonly property string barCaption: {
+        if (!root.barDomain) return 'WAITING FOR TELEMETRY'
+        if (root.barDomain.stale) return root.barDomain.sectionTitle.toUpperCase() + ' · OFFLINE'
+        if (root.barAuto) return root.barDomain.sectionTitle.toUpperCase() + ' · ' + root.barDomain.constraintLabel.toUpperCase()
+        return root.barDomain.sectionTitle.toUpperCase() + ' · ' + root.barDomain.tag
+    }
+    function pinBar(key, mode) {
+        root.setSetting('barSource', key)
+        if (key !== 'auto') {
+            var s = root.sectionFor(key)
+            if (s && mode !== undefined && mode !== null) s.setMode(mode)
+        }
+    }
     function setSetting(key, value) {
         var next = {}
         for (var k in root.settings) next[k] = root.settings[k]
@@ -86,6 +129,11 @@ Panel {
     function status() {
         return JSON.stringify({
             opened: root.opened, active: root.active, version: root.version,
+            chooseMode: root.chooseMode, barSource: root.barSource, barKey: root.barKey,
+            barCaption: root.barCaption,
+            // Content geometry, so a caller can crop a screenshot to the panel
+            // without guessing where it ends.
+            panelWidth: panel.contentWidth, panelHeight: panel.contentHeight,
             cpu: cpuSection.status ? JSON.parse(cpuSection.status()) : null,
             ram: ramSection.status ? JSON.parse(ramSection.status()) : null,
             disk: diskSection.status ? JSON.parse(diskSection.status()) : null,
@@ -107,7 +155,11 @@ Panel {
         function close(): void { root.close() }
         function toggle(): void { root.chooseMode = false; root.toggle() }
         function status(): string { return root.status() }
-        function modes(): void { root.chooseMode = false; root.active = 'settings'; root.open() }
+        function modes(): void { root.chooseMode = true; root.open() }
+        function settings(): void { root.chooseMode = false; root.active = 'settings'; root.open() }
+        function constraints(): void { root.chooseMode = false; root.active = 'constraints'; root.open() }
+        // Put the icon back on auto, or pin it, without opening the panel.
+        function pin(page: string): void { root.pinBar(String(page || 'auto'), null) }
         // Jump straight to one domain's dashboard — the replacement for the
         // four plugins' separate `open` calls.
         function show(page: string): void { root.openSection(String(page || 'overview')) }
@@ -131,10 +183,11 @@ Panel {
     }
 
     // ---- bar entry ---------------------------------------------------
-    // One button, four chips. Each chip is the original plugin's own bar chip,
-    // instantiated from a Component the section owns, so it keeps its own
-    // animation, tint and readout grammar. Clicking a chip opens that domain
-    // directly; clicking the gap opens the Overview.
+    // ONE icon. That is the whole point of the merge: not four chips sharing a
+    // button, but a single readout that is always showing you the thing that
+    // matters most right now. The chip itself is the constrained domain's own
+    // chip, so the shape and colour change with it, and the caption underneath
+    // names the domain and what is constraining it.
     WidgetButton {
         id: button
         anchors.fill: parent
@@ -143,66 +196,56 @@ Panel {
         hasVisualContent: true
         fixedWidth: vertical ? -1 : barRow.implicitWidth + 12
         tooltipText: {
-            var parts = []
+            var lines = [root.barAuto ? 'Pulse · following the biggest constraint'
+                                      : 'Pulse · pinned to ' + (root.barDomain ? root.barDomain.sectionTitle : root.barSource)]
             for (var i = 0; i < root.domains.length; i++) {
                 var d = root.domains[i]
-                if (!d || !root.chipEnabled(root.domainKeys[i])) continue
-                parts.push(d.sectionTitle + ': ' + (d.stale ? 'telemetry offline' : d.headline + ' ' + d.tag))
+                if (!d) continue
+                lines.push((d === root.barDomain ? '▸ ' : '  ') + d.sectionTitle + ': '
+                           + (d.stale ? 'telemetry offline'
+                                      : d.headline + ' ' + d.tag + '  —  ' + d.constraintLabel + ' ' + d.constraintValue))
             }
-            return 'Pulse\n' + parts.join('\n') + '\nLeft-click: overview · Right-click: settings'
+            lines.push('Left-click: dashboard · Right-click: choose the readout')
+            return lines.join('\n')
         }
         onPressed: function (b) {
-            if (b === Qt.RightButton) { root.active = 'settings'; root.open() }
+            if (b === Qt.RightButton) { root.chooseMode = true; root.open() }
             else { root.chooseMode = false; root.active = 'overview'; root.toggle() }
         }
-        // Row lays its own children out, so each cell is an Item and the
-        // centring happens inside it. Anchoring a direct child of a Row
-        // switches the Row's layout off entirely.
         Row {
             id: barRow
             anchors.centerIn: parent
-            spacing: 8
-            Repeater {
-                model: root.domains
-                Item {
-                    id: chipCell
-                    required property var modelData
-                    required property int index
-                    readonly property string key: root.domainKeys[index]
-                    visible: root.chipEnabled(key)
-                    implicitWidth: visible ? cellRow.implicitWidth : 0
-                    implicitHeight: cellRow.implicitHeight
-                    width: implicitWidth
-                    height: implicitHeight
-                    Row {
-                        id: cellRow
-                        anchors.centerIn: parent
-                        spacing: 4
-                        Loader { sourceComponent: chipCell.modelData.barChip }
-                        Column {
-                            visible: root.setting(chipCell.key + '.showReadout', true)
-                            Text {
-                                text: chipCell.modelData.headline
-                                color: root.barForeground
-                                font.family: Style.font.family
-                                font.pixelSize: 12
-                                font.bold: true
-                                textFormat: Text.PlainText
-                            }
-                            Text {
-                                text: chipCell.modelData.tag
-                                color: chipCell.modelData.tint
-                                font.pixelSize: 7
-                                font.letterSpacing: 0.8
-                                textFormat: Text.PlainText
-                            }
-                        }
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.LeftButton
-                        onClicked: root.openSection(chipCell.key)
-                    }
+            spacing: 5
+            Item {
+                width: chipLoader.implicitWidth
+                height: chipLoader.implicitHeight
+                anchors.verticalCenter: parent.verticalCenter
+                Loader {
+                    id: chipLoader
+                    anchors.centerIn: parent
+                    // Keyed on the domain so the chip is rebuilt when the icon
+                    // switches, rather than a stale one being re-bound.
+                    sourceComponent: root.barDomain ? root.barDomain.barChip : null
+                }
+            }
+            Column {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 0
+                Text {
+                    text: root.barDomain ? root.barDomain.headline : '—'
+                    color: root.barForeground
+                    font.family: Style.font.family
+                    font.pixelSize: 12
+                    font.bold: true
+                    textFormat: Text.PlainText
+                }
+                Text {
+                    text: root.barCaption
+                    color: root.barDomain ? root.barDomain.tint : root.barForeground
+                    font.pixelSize: 7
+                    font.letterSpacing: 0.6
+                    font.bold: true
+                    textFormat: Text.PlainText
                 }
             }
         }
@@ -256,14 +299,19 @@ Panel {
         bar: root.bar
         open: root.opened
         focusTarget: body
-        contentWidth: panel.fittedContentWidth(760)
-        contentHeight: panel.fittedContentHeight(Math.min(shell.implicitHeight, 760))
+        // Both dimensions are handed the content's real size. KeyboardPanel
+        // fits them to the screen itself (bar and margins already subtracted),
+        // and pre-clamping here is what makes a panel scroll while the screen
+        // still has room.
+        contentWidth: panel.fittedContentWidth(980)
+        contentHeight: panel.fittedContentHeight(shell.implicitHeight)
         Item {
             id: body
             anchors.fill: parent
             focus: true
-            Keys.onEscapePressed: root.close()
+            Keys.onEscapePressed: { if (root.chooseMode) root.chooseMode = false; else root.close() }
             Keys.onPressed: function (event) {
+                if (root.chooseMode) return
                 if (event.key === Qt.Key_Left) {
                     root.active = root.pages[Math.max(0, root.pageIndex - 1)].key
                     event.accepted = true
@@ -303,33 +351,37 @@ Panel {
                         width: parent.width
                         spacing: 10
                         Column {
-                            width: parent.width - 250
+                            width: parent.width - 290
                             spacing: 3
                             Heading {
-                                text: root.active === 'overview' || root.active === 'settings' || root.active === 'about'
-                                      ? 'PULSE' : (root.sectionFor(root.active) ? root.sectionFor(root.active).sectionTitle.toUpperCase() + ' PULSE' : 'PULSE')
+                                text: {
+                                    if (root.chooseMode) return 'PULSE'
+                                    var s = root.sectionFor(root.active)
+                                    return s ? s.sectionTitle.toUpperCase() + ' PULSE' : 'PULSE'
+                                }
                                 font.pixelSize: 19
                                 font.letterSpacing: 3
                             }
                             Label {
                                 text: {
+                                    var tail = root.version !== '' ? '   ·   v' + root.version : ''
+                                    if (root.chooseMode) return 'Choose what the bar icon shows.' + tail
                                     var s = root.sectionFor(root.active)
-                                    if (s) return s.sectionBlurb + (root.version !== '' ? '   ·   v' + root.version : '')
-                                    return 'CPU, memory, storage and network in one place.' + (root.version !== '' ? '   ·   v' + root.version : '')
+                                    return (s ? s.sectionBlurb : 'CPU, memory, storage and network in one place.') + tail
                                 }
                                 font.pixelSize: 11
                             }
                         }
                         Rectangle {
                             id: verdictPill
-                            width: 240
+                            width: 280
                             height: 32
                             radius: 16
                             // On a domain page the pill speaks for that domain.
                             // On Overview, Settings or About it speaks for the
                             // unhappiest domain, which is the reading you most
                             // need to see without choosing a page first.
-                            readonly property var subject: root.sectionFor(root.active) || root.worst
+                            readonly property var subject: root.chooseMode ? root.worst : (root.sectionFor(root.active) || root.worst)
                             readonly property color subjectTint: subject ? subject.tint : root.ink
                             color: Qt.alpha(subjectTint, 0.14)
                             border.color: Qt.alpha(subjectTint, 0.5)
@@ -348,7 +400,15 @@ Panel {
                                     }
                                 }
                                 Label {
-                                    text: verdictPill.subject ? verdictPill.subject.verdict : 'WAITING FOR TELEMETRY'
+                                    // On a domain page this is that domain's own
+                                    // phrase. Everywhere else it names the actual
+                                    // constraint, so the pill can never say
+                                    // "cruising" while Constraints says critical.
+                                    text: {
+                                        if (!verdictPill.subject) return 'WAITING FOR TELEMETRY'
+                                        if (root.sectionFor(root.active) && !root.chooseMode) return verdictPill.subject.verdict
+                                        return verdictPill.subject.sectionTitle.toUpperCase() + ' · ' + verdictPill.subject.constraintLabel.toUpperCase()
+                                    }
                                     color: root.ink
                                     font.pixelSize: 9
                                     font.bold: true
@@ -359,6 +419,8 @@ Panel {
 
                     // Page switcher.
                     Row {
+                        visible: !root.chooseMode
+                        height: visible ? implicitHeight : 0
                         spacing: 8
                         Repeater {
                             model: root.pages
@@ -376,50 +438,63 @@ Panel {
                         }
                     }
 
+                    ConstraintsPage {
+                        host: root
+                        width: parent.width
+                        visible: !root.chooseMode && root.active === 'constraints'
+                        height: visible ? implicitHeight : 0
+                    }
                     OverviewPage {
                         host: root
                         width: parent.width
-                        visible: root.active === 'overview'
+                        visible: !root.chooseMode && root.active === 'overview'
                         height: visible ? implicitHeight : 0
                     }
                     CpuSection {
                         id: cpuSection
                         host: root
                         width: parent.width
-                        visible: root.active === 'cpu'
+                        visible: !root.chooseMode && root.active === 'cpu'
                         height: visible ? implicitHeight : 0
                     }
                     RamSection {
                         id: ramSection
                         host: root
                         width: parent.width
-                        visible: root.active === 'ram'
+                        visible: !root.chooseMode && root.active === 'ram'
                         height: visible ? implicitHeight : 0
                     }
                     DiskSection {
                         id: diskSection
                         host: root
                         width: parent.width
-                        visible: root.active === 'disk'
+                        visible: !root.chooseMode && root.active === 'disk'
                         height: visible ? implicitHeight : 0
                     }
                     NetSection {
                         id: netSection
                         host: root
                         width: parent.width
-                        visible: root.active === 'net'
+                        visible: !root.chooseMode && root.active === 'net'
                         height: visible ? implicitHeight : 0
                     }
                     SettingsPage {
                         host: root
                         width: parent.width
-                        visible: root.active === 'settings'
+                        visible: !root.chooseMode && root.active === 'settings'
                         height: visible ? implicitHeight : 0
                     }
                     AboutPage {
                         host: root
                         width: parent.width
-                        visible: root.active === 'about'
+                        visible: !root.chooseMode && root.active === 'about'
+                        height: visible ? implicitHeight : 0
+                    }
+
+                    ChooserPage {
+                        host: root
+                        width: parent.width
+                        visible: root.chooseMode
                         height: visible ? implicitHeight : 0
                     }
 
@@ -428,7 +503,11 @@ Panel {
                         width: parent.width
                         wrapMode: Text.WordWrap
                         font.pixelSize: 10
-                        text: root.actionStatus || 'Four recorders, 7-day retention, this machine only  ·  ← → switches pages  ·  Esc closes'
+                        text: root.actionStatus || (root.chooseMode
+                              ? 'Pick a readout to pin the icon, or Auto to let it follow the constraint  ·  Esc closes'
+                              : (root.barAuto ? 'Icon follows the biggest constraint'
+                                              : 'Icon pinned to ' + (root.barDomain ? root.barDomain.sectionTitle : root.barSource))
+                                + '  ·  right-click it to change  ·  ← → switches pages  ·  Esc closes')
                     }
                 }
             }

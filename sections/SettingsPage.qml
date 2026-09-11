@@ -68,28 +68,29 @@ Item {
     component Toggle: Row {
         id: row
         property string label: ''
+        property int labelWidth: 210
         property bool value: false
         property color accent: root.ink
         signal picked(bool next)
         spacing: 8
         Label {
-            width: 210
+            width: row.labelWidth
             text: row.label
             anchors.verticalCenter: parent.verticalCenter
             elide: Text.ElideRight
         }
         Action {
             text: 'On'
-            implicitWidth: 66
-            implicitHeight: 28
+            implicitWidth: 52
+            implicitHeight: 26
             selected: row.value
             accent: row.accent
             onClicked: row.picked(true)
         }
         Action {
             text: 'Off'
-            implicitWidth: 66
-            implicitHeight: 28
+            implicitWidth: 52
+            implicitHeight: 26
             selected: !row.value
             accent: row.accent
             onClicked: row.picked(false)
@@ -99,7 +100,64 @@ Item {
     Column {
         id: column
         width: parent.width
-        spacing: 14
+        spacing: 10
+
+        // There is one icon, so which domain it speaks for is a single
+        // decision rather than four. Auto is the default and the reason the
+        // four were merged; the rest of this page is per-domain detail.
+        Rectangle {
+            width: column.width
+            height: barInner.implicitHeight + 28
+            radius: 14
+            color: root.card
+            border.color: host.barAuto ? Qt.alpha(host.barDomain ? host.barDomain.tint : root.ink, 0.5) : root.cardEdge
+            Column {
+                id: barInner
+                anchors.fill: parent
+                anchors.margins: 14
+                spacing: 10
+                Heading { text: 'THE BAR ICON'; font.letterSpacing: 1.5 }
+                Label {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: host.barAuto
+                          ? 'Following the biggest constraint. Right now that is '
+                            + (host.barDomain ? host.barDomain.sectionTitle + ' — ' + host.barDomain.constraintLabel.toLowerCase()
+                                            + ' at ' + host.barDomain.constraintValue : 'nothing measurable') + '.'
+                          : 'Pinned to ' + (host.barDomain ? host.barDomain.sectionTitle : host.barSource)
+                            + '. It will not move, even if another domain becomes tighter.'
+                }
+                Flow {
+                    width: parent.width
+                    spacing: 6
+                    Action {
+                        implicitWidth: 200
+                        height: 34
+                        selected: host.barAuto
+                        accent: host.barDomain ? host.barDomain.tint : root.ink
+                        text: 'Auto  ·  biggest constraint'
+                        onClicked: host.pinBar('auto', null)
+                    }
+                    Repeater {
+                        model: host.domains
+                        Action {
+                            required property var modelData
+                            required property int index
+                            implicitWidth: 128
+                            height: 34
+                            accent: modelData.tint
+                            selected: host.barSource === host.domainKeys[index]
+                            text: 'Pin ' + modelData.sectionTitle
+                            onClicked: host.pinBar(host.domainKeys[index], null)
+                        }
+                    }
+                }
+                Label {
+                    font.pixelSize: 10
+                    text: 'Right-clicking the icon opens the same choice with every readout listed and priced against live values.'
+                }
+            }
+        }
 
         Repeater {
             model: host.domains
@@ -109,7 +167,7 @@ Item {
                 required property int index
                 readonly property string key: host.domainKeys[index]
                 width: column.width
-                height: inner.implicitHeight + 28
+                height: inner.implicitHeight + 20
                 radius: 14
                 color: root.card
                 border.color: root.cardEdge
@@ -117,8 +175,8 @@ Item {
                 Column {
                     id: inner
                     anchors.fill: parent
-                    anchors.margins: 14
-                    spacing: 10
+                    anchors.margins: 12
+                    spacing: 6
 
                     Row {
                         width: parent.width
@@ -135,65 +193,49 @@ Item {
                         }
                     }
 
-                    Toggle {
-                        label: 'Show this chip in the bar'
-                        accent: block.modelData.tint
-                        value: host.setting(block.key + '.inBar', true)
-                        onPicked: function (next) { host.setSetting(block.key + '.inBar', next) }
-                    }
-                    Toggle {
-                        label: 'Show its readout beside the chip'
-                        accent: block.modelData.tint
-                        value: host.setting(block.key + '.showReadout', true)
-                        onPicked: function (next) { host.setSetting(block.key + '.showReadout', next) }
-                    }
-                    Toggle {
-                        label: 'Animate the chip'
-                        accent: block.modelData.tint
-                        value: host.setting(block.key + '.animated', true)
-                        onPicked: function (next) { host.setSetting(block.key + '.animated', next) }
-                    }
-
-                    // RAM is the one domain whose table has two shapes, and the
-                    // choice is durable, so it belongs here as well as in the
-                    // tab where you notice you want it.
-                    Toggle {
-                        visible: block.key === 'ram'
-                        height: visible ? implicitHeight : 0
-                        label: 'Group hoarders by app'
-                        accent: block.modelData.tint
-                        value: host.setting('ram.groupByApp', true) !== false
-                        onPicked: function (next) { host.setSetting('ram.groupByApp', next) }
-                    }
-
                     Row {
-                        visible: block.key === 'disk'
-                        height: visible ? implicitHeight : 0
-                        spacing: 8
-                        Label { width: 210; text: 'Filesystem the bar follows'; anchors.verticalCenter: parent.verticalCenter }
+                        spacing: 14
+                        Toggle {
+                            label: 'Animate the chip'
+                            labelWidth: 104
+                            accent: block.modelData.tint
+                            value: host.setting(block.key + '.animated', true)
+                            onPicked: function (next) { host.setSetting(block.key + '.animated', next) }
+                        }
+                        // RAM is the one domain whose table has two shapes, and
+                        // the choice is durable, so it belongs here as well as
+                        // in the tab where you notice you want it.
+                        Toggle {
+                            visible: block.key === 'ram'
+                            width: visible ? implicitWidth : 0
+                            label: 'Group hoarders by app'
+                            labelWidth: 140
+                            accent: block.modelData.tint
+                            value: host.setting('ram.groupByApp', true) !== false
+                            onPicked: function (next) { host.setSetting('ram.groupByApp', next) }
+                        }
                         Label {
+                            visible: block.key === 'disk'
                             anchors.verticalCenter: parent.verticalCenter
-                            color: root.ink
-                            text: host.setting('disk.mountpoint', '/') + '   ·   pick another in Disk → Overview'
+                            font.pixelSize: 10
+                            text: 'Bar follows ' + host.setting('disk.mountpoint', '/') + ' · pick another in Disk → Overview'
                         }
                     }
 
-                    Rectangle { width: parent.width; height: 1; color: root.cardEdge }
-
                     Label {
-                        text: 'BAR READOUT   ·   ' + block.modelData.modeHint
+                        text: 'READOUT WHEN THE ICON SHOWS ' + block.modelData.sectionTitle.toUpperCase() + '   ·   ' + block.modelData.modeHint
                         font.pixelSize: 10
                         font.letterSpacing: 1
                     }
                     Flow {
                         width: parent.width
-                        spacing: 6
+                        spacing: 5
                         Repeater {
                             model: block.modelData.modeCount
                             Action {
                                 required property int index
-                                implicitWidth: Math.max(150, (inner.width - 18) / 2)
-                                height: 34
+                                implicitWidth: (inner.width - 10) / 3
+                                height: 30
                                 accent: block.modelData.tint
                                 selected: block.modelData.mode === index
                                 text: block.modelData.modeLabel(index)
@@ -207,9 +249,8 @@ Item {
 
         Label {
             width: parent.width
-            wrapMode: Text.WordWrap
             font.pixelSize: 10
-            text: 'Settings are stored in this widget\'s shell.json entry, namespaced per domain, so the four no longer compete for the same keys.'
+            text: 'Stored in this widget\'s shell.json entry, namespaced per domain.'
         }
     }
 }

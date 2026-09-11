@@ -3,6 +3,9 @@ import "RamModel.js" as Model
 
 Item {
     id: root
+    // False drops the axis labels and their gutters, for the Overview
+    // cards where the chart is too short to carry them.
+    property bool axesVisible: true
     property var historyData: ({points:[], seconds:3600, now:0, bucket:15})
     property color tint: Model.RAMP_FALLBACK.high
     // Chrome the panel supplies from the active theme. The defaults are the
@@ -30,15 +33,17 @@ Item {
         id: graph
         anchors.fill: parent
         onWidthChanged: root.repaint()
+        Connections { target: root; function onAxesVisibleChanged() { root.repaint() } }
         onHeightChanged: root.repaint()
         onPaint: {
-            var c=getContext('2d'), w=width-38, h=height-26
+            var gutter=root.axesVisible?38:0, foot=root.axesVisible?26:4
+            var c=getContext('2d'), w=width-gutter, h=height-foot
             c.reset();c.clearRect(0,0,width,height)
             c.font='10px "'+root.fontFamily+'"';c.textAlign='right'
             for(var line=0;line<=4;line++){
                 var y=8+(h-8)*line/4
                 c.strokeStyle=root.grid;c.lineWidth=1;c.beginPath();c.moveTo(0,y);c.lineTo(w,y);c.stroke()
-                c.fillStyle=root.axisText;c.fillText(String(100-line*25)+'%',width,y+3)
+                if(root.axesVisible){c.fillStyle=root.axisText;c.fillText(String(100-line*25)+'%',width,y+3)}
             }
             function xAt(p){return w*(p[0]-(root.historyData.now-root.historyData.seconds))/root.historyData.seconds}
             function yAt(v){return 8+(h-8)*(1-v/100)}
@@ -59,8 +64,10 @@ Item {
                 var last=pts[pts.length-1]
                 c.fillStyle=root.tint;c.beginPath();c.arc(xAt(last),yAt(last[1]),3,0,Math.PI*2);c.fill()
             }
-            c.fillStyle=root.axisText;c.textAlign='left';c.fillText(root.historyData.seconds===3600?'1 hour ago':root.historyData.seconds===86400?'24 hours ago':'7 days ago',0,height-3)
-            c.textAlign='right';c.fillText('now',w,height-3)
+            if(root.axesVisible){
+                c.fillStyle=root.axisText;c.textAlign='left';c.fillText(root.historyData.seconds===3600?'1 hour ago':root.historyData.seconds===86400?'24 hours ago':'7 days ago',0,height-3)
+                c.textAlign='right';c.fillText('now',w,height-3)
+            }
         }
     }
     Rectangle {

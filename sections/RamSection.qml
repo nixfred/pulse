@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "RamModel.js" as Model
+import "Constraints.js" as Constraints
 
 // RAM section of Pulse — the whole of nixfred.ram-pulse's dashboard, hosted
 // inside the merged panel. Everything below the host bridge is the original
@@ -177,12 +178,19 @@ Item {
     readonly property int modeCount: 4
     readonly property string modeHint: 'Choose what lives beside the chip. One decimal.'
     function modeLabel(index) { return (index+1)+'.  '+Model.modeName(index)+'   ·   '+Model.readout(root.mem,index) }
-    readonly property real concern: root.stale ? 1 : Math.max(0, Math.min(1, 1 - (root.mem.availablePct || 0)/100))
+    // What is holding this domain back, ranked worst first. The severity
+    // scale is shared across all four domains, so the bar icon and the
+    // Constraints page agree on which one is actually the bottleneck.
+    readonly property var constraints: Constraints.ram(root.mem, root.stale)
+    readonly property var topConstraint: root.constraints.length ? root.constraints[0] : null
+    readonly property real concern: root.topConstraint ? root.topConstraint.severity : 0
+    readonly property string constraintLabel: root.topConstraint ? root.topConstraint.label : 'No constraint'
+    readonly property string constraintValue: root.topConstraint ? root.topConstraint.value : '—'
     readonly property string headline: root.stale ? '—' : Model.readout(root.mem, root.mode)
     readonly property string tag: root.mode===1||root.mode===2 ? 'USED' : 'AVAILABLE'
     property Component barChip: Component { MemoryChip {compact:true;body:root.themeBg;available:root.mem.availablePct || 0;tint:root.tint;animate:!root.stale && root.setting('animated',true)} }
     property Component cardChip: Component { MemoryChip {width:88;height:88;body:Color.popups.background;available:root.mem.availablePct || 0;tint:root.tint;animate:root.cardLive} }
-    property Component cardGraph: Component { RamHistoryGraph {historyData:root.chart;tint:root.tint;swapTint:root.themeAccent;grid:root.stroke;axisText:root.themeMuted;crosshair:root.strokeStrong;hoverBackground:root.surfaceHover;hoverBorder:root.stroke;hoverForeground:root.themeText;fontFamily:root.themeFont} }
+    property Component cardGraph: Component { RamHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;swapTint:root.themeAccent;grid:root.stroke;axisText:root.themeMuted;crosshair:root.strokeStrong;hoverBackground:root.surfaceHover;hoverBorder:root.stroke;hoverForeground:root.themeText;fontFamily:root.themeFont} }
 
     component Label: Text {
         color:root.themeMuted;font.pixelSize:12;font.family:root.themeFont;textFormat:Text.PlainText

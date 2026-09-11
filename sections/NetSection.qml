@@ -6,6 +6,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "NetModel.js" as Model
+import "Constraints.js" as Constraints
 
 // Network section of Pulse — the whole of nixfred.net-pulse's dashboard, hosted
 // inside the merged panel. Everything below the host bridge is the original
@@ -269,8 +270,6 @@ Item {
     // Width floors for the bar readout, measured by hidden labels rather than by
     // TextMetrics: only an identical Text arrives at an identical implicitWidth,
     // and the third of a pixel the two disagree by is still a resize.
-    Text { id:readoutFloor; visible:false; font:readoutText.font; textFormat:Text.PlainText; text:Model.widestReadout(root.net,root.mode) }
-    Text { id:tagFloor; visible:false; font:tagText.font; textFormat:Text.PlainText; text:Model.widestTag(root.net,root.mode) }
     Timer { interval:2000; running:true; repeat:true; onTriggered:{root.now=Date.now()/1000; if(root.stale)snapshotFile.reload()} }
     Timer {
         id:wifiPoll; interval:500; repeat:true; running:root.wifiKind!==''
@@ -317,12 +316,19 @@ Item {
     readonly property int modeCount: 5
     readonly property string modeHint: 'Choose what lives beside the chip.'
     function modeLabel(index) { return (index+1)+'.  '+Model.modeName(index)+'   ·   '+Model.readout(root.net,index) }
-    readonly property real concern: root.stale ? 1 : Math.max(0, Math.min(1, 1 - (root.health || 0)/100))
+    // What is holding this domain back, ranked worst first. The severity
+    // scale is shared across all four domains, so the bar icon and the
+    // Constraints page agree on which one is actually the bottleneck.
+    readonly property var constraints: Constraints.net(root.net, root.stale)
+    readonly property var topConstraint: root.constraints.length ? root.constraints[0] : null
+    readonly property real concern: root.topConstraint ? root.topConstraint.severity : 0
+    readonly property string constraintLabel: root.topConstraint ? root.topConstraint.label : 'No constraint'
+    readonly property string constraintValue: root.topConstraint ? root.topConstraint.value : '—'
     readonly property string headline: root.stale ? '—' : Model.readout(root.net, root.mode)
     readonly property string tag: Model.modeTag(root.net, root.mode)
     property Component barChip: Component { NetChip {compact:true;body:Color.bar.background;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint;stops:root.rampStops;animate:!root.stale && root.setting('animated',true)} }
     property Component cardChip: Component { NetChip {width:88;height:88;body:Color.popups.background;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint;stops:root.rampStops;animate:root.cardLive} }
-    property Component cardGraph: Component { NetHistoryGraph {historyData:root.chart;tint:root.tint;latencyTint:root.themeUrgent;upTint:root.themeAccent;axisText:root.dimText;gridLine:root.gridLine;tipBackground:Color.tooltip.background;tipBorder:Color.tooltip.border;tipText:Color.tooltip.text} }
+    property Component cardGraph: Component { NetHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;latencyTint:root.themeUrgent;upTint:root.themeAccent;axisText:root.dimText;gridLine:root.gridLine;tipBackground:Color.tooltip.background;tipBorder:Color.tooltip.border;tipText:Color.tooltip.text} }
 
     component Label: Text { color:root.bodyText;font.pixelSize:12;textFormat:Text.PlainText }
     component Heading: Text { color:root.panelText;font.pixelSize:15;font.bold:true;textFormat:Text.PlainText }

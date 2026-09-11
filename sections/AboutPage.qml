@@ -18,6 +18,9 @@ Item {
     readonly property color card: Util.alpha(ink, 0.05)
     readonly property color cardEdge: Util.alpha(ink, 0.15)
 
+    readonly property string repoUrl: 'https://github.com/nixfred/pulse'
+    readonly property string siteUrl: 'https://nixfred.com'
+
     readonly property var upstream: [
         {name: 'CPU Pulse',  repo: 'https://github.com/nixfred/omacpu',                 unit: 'cpu-pulse.service'},
         {name: 'RAM Pulse',  repo: 'https://github.com/nixfred/ram.plugin.omarchy',     unit: 'ram-pulse.service'},
@@ -46,6 +49,21 @@ Item {
         font.pixelSize: 15
         font.bold: true
         textFormat: Text.PlainText
+    }
+    component Link: Text {
+        id: link
+        property string url: ''
+        color: linkArea.containsMouse ? root.ink : root.inkDim
+        font.pixelSize: 12
+        font.underline: linkArea.containsMouse
+        textFormat: Text.PlainText
+        MouseArea {
+            id: linkArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.openUrl(link.url)
+        }
     }
     component Stat: Rectangle {
         property string label: ''
@@ -77,6 +95,38 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 text: 'One widget for the four readings that tell you what a machine is doing: how hard it is thinking, how much it can still remember, how much room it has left, and whether it can reach anything. Four plugins used to do this from four bar entries. This is those four, whole, behind one chip row.'
+            }
+        }
+
+        // Where this came from and where it lives. At the top, because an
+        // About page whose links are below the fold is an About page nobody
+        // follows.
+        Row {
+            width: parent.width
+            spacing: 8
+            Text {
+                text: 'Source'
+                color: root.inkDim
+                font.pixelSize: 12
+                font.bold: true
+                textFormat: Text.PlainText
+            }
+            Link { text: 'github.com/nixfred/pulse'; url: root.repoUrl }
+            Text { text: '·'; color: root.inkDim; font.pixelSize: 12 }
+            Text {
+                text: 'Built by'
+                color: root.inkDim
+                font.pixelSize: 12
+                font.bold: true
+                textFormat: Text.PlainText
+            }
+            Link { text: 'nixfred.com'; url: root.siteUrl }
+            Text { text: '·'; color: root.inkDim; font.pixelSize: 12 }
+            Text {
+                text: 'MIT'
+                color: root.inkDim
+                font.pixelSize: 12
+                textFormat: Text.PlainText
             }
         }
 
@@ -124,7 +174,7 @@ Item {
             Label {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: 'Each domain page below is the original plugin\'s dashboard in full — the same tabs, tables, controls and numbers, reading the same recorder and the same seven days of history. The merge added exactly two pages: this one, and the Overview.'
+                text: 'Each domain page below is the original plugin\'s dashboard in full — the same tabs, tables, controls and numbers, reading the same recorder and the same seven days of history. The merge added three pages that could not exist before: the Overview, Constraints, and this one.'
             }
             Repeater {
                 model: root.upstream
@@ -134,19 +184,10 @@ Item {
                     Label { text: '·'; font.pixelSize: 11 }
                     Label { text: modelData.name; color: root.ink; font.pixelSize: 11; width: 90 }
                     Label { text: modelData.unit; font.pixelSize: 11; width: 130 }
-                    Text {
+                    Link {
                         text: modelData.repo.replace(/^https?:\/\//, '')
-                        color: linkArea.containsMouse ? root.ink : root.inkDim
+                        url: modelData.repo
                         font.pixelSize: 11
-                        font.underline: linkArea.containsMouse
-                        textFormat: Text.PlainText
-                        MouseArea {
-                            id: linkArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.openUrl(modelData.repo)
-                        }
                     }
                 }
             }

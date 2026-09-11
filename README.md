@@ -1,59 +1,160 @@
+<div align="center">
+
 # Pulse
 
-One Omarchy bar widget for the four readings that say what a machine is doing:
-how hard it is thinking, how much it can still remember, how much room it has
-left, and whether it can reach anything.
+**One Omarchy bar icon that always shows you the thing holding your machine back.**
 
-This is the merge of four plugins that each did one of those:
+CPU, memory, storage and network — four dashboards, one widget, zero guessing about which one is the problem.
 
-| Was | Now | Recorder |
-|---|---|---|
-| [CPU Pulse](https://github.com/nixfred/omacpu) | the **CPU** page | `cpu-pulse.service` |
-| [RAM Pulse](https://github.com/nixfred/ram.plugin.omarchy) | the **RAM** page | `ram-pulse.service` |
-| [Disk Pulse](https://github.com/nixfred/disk.pulse) | the **Disk** page | `disk-pulse.service` |
-| [Net Pulse](https://github.com/nixfred/omanet.plugin.omarchy) | the **Network** page | `net-pulse.service` |
+[![Omarchy](https://img.shields.io/badge/Omarchy-plugin-00d3f2?style=flat-square)](https://omarchy.org)
+[![Quickshell](https://img.shields.io/badge/Quickshell-QML-5e81ac?style=flat-square)](https://quickshell.org)
+[![License](https://img.shields.io/badge/license-MIT-a3be8c?style=flat-square)](LICENSE)
+[![nixfred.com](https://img.shields.io/badge/built%20by-nixfred.com-e0a458?style=flat-square)](https://nixfred.com)
 
-**Nothing was summarised away.** Each domain page is the original plugin's
-dashboard in full: the same sub-tabs, the same tables, the same controls, the
-same seven days of history, reading the same recorder and the same state
-directory. The merge added exactly two pages that could not exist before —
-Overview and Settings — and took away four bar entries.
+</div>
 
-## The panel
+---
 
-**Overview** — one card per domain: that domain's own chip, its own readout in
-its own grammar, its verdict, and its history line. The card with the least
-headroom takes a coloured border, so the reading you came for stands out before
-you read a number. Clicking a card opens that domain.
+## The idea
 
-**CPU** · Overview, CPU hogs, Processor lab, About
-**RAM** · Overview, RAM hoarders, Memory lab, About
-**Disk** · Overview, Disk hogs, Storage lab, About
-**Network** · Overview, Wi-Fi, Interfaces, Talkers, Data, Network lab, About
+A system monitor that shows you four numbers is asking you to do the ranking.
 
-**Settings** — every setting the four had, grouped by domain, plus the two
-decisions that only exist once they share a bar entry: which chips appear in
-the bar, and which of them carry a readout. Each plugin used to hide its
-readout chooser behind a right-click on its own chip; with one bar entry, all
-four choosers live here.
+Pulse does the ranking. Every reading across all four domains is scored on one
+shared severity scale, and the bar icon becomes whichever domain is currently
+worst — the chip changes shape, the colour changes with it, and the caption
+says what it is and why:
 
-**About** — what this is, what it replaced, and where each part came from.
+```
+▨  1.5 GiB          ▨  89°C              ▨  137.3 GiB
+   RAM · LOW HEADROOM   CPU · PACKAGE TEMPERATURE   DISK · FREE SPACE ON /
+```
 
-## The bar
+<div align="center">
+<img src="docs/img/bar-icon.png" width="300" alt="The Pulse bar icon showing a RAM chip, 2.1 GiB, and the caption RAM · FULL STALLS">
+</div>
 
-Four chips in one entry. Each is the original plugin's own bar chip, so it keeps
-its own animation and tint. Click a chip to open that domain directly, click the
-gap for the Overview, right-click for Settings.
+You never choose what to watch. It tells you.
+
+And when you want the detail, all four original dashboards are still there,
+whole, behind their own names.
+
+<div align="center">
+<img src="docs/img/overview.png" width="820" alt="Pulse Overview: four cards, one per domain, each with its own chip, readout, verdict and history trace">
+</div>
+
+---
+
+## Constraints — the page that only exists because the four are together
+
+Four separate monitors can each tell you how they are doing. None of them can
+tell you which one is the problem, because none of them can see the other three.
+
+<div align="center">
+<img src="docs/img/constraints.png" width="820" alt="Constraints page: all four domains ranked worst-first with per-reading severity bars and plain-language explanations">
+</div>
+
+Domains are ranked worst first. Every reading gets a severity bar on one 0–1
+scale, a real value, and a sentence explaining what it costs you — not a
+threshold, an explanation:
+
+| Domain | What it watches |
+|---|---|
+| **CPU** | sustained load, saturated threads, package temperature, scheduler pressure, power profile, throttling events |
+| **RAM** | free headroom, pages swapped to disk, memory pressure, full stalls, compressed swap held in RAM |
+| **Disk** | free space on the followed filesystem, drive busy time, I/O pressure, full I/O stalls, drive temperature, SMART warnings and wear |
+| **Network** | route out, internet round trip, packet loss, Wi-Fi signal, gateway round trip |
+
+The same scores drive the bar icon, so whatever the icon is showing is always
+the top row of this page.
+
+---
+
+## Every readout, priced against live values
+
+Right-click the icon. Auto is the default. Below it, every readout of every
+domain, each showing what it would read right now — so you pin against a real
+number rather than a name.
+
+<div align="center">
+<img src="docs/img/chooser.png" width="820" alt="Right-click chooser: Auto plus all nineteen readouts across the four domains, each showing its current value">
+</div>
+
+Pinning stops the icon moving. Auto puts it back.
+
+---
+
+## Nothing was summarised away
+
+Each domain page is the original plugin's dashboard in full — the same
+sub-tabs, tables, controls and numbers, reading the same recorder and the same
+seven days of history.
+
+<div align="center">
+<img src="docs/img/cpu.png" width="410" alt="CPU page: per-thread load, clocks, temperature, pressure and seven-day history">
+<img src="docs/img/network.png" width="410" alt="Network page: throughput, latency, Wi-Fi detail, interfaces, talkers and usage history">
+</div>
+
+| Page | Tabs |
+|---|---|
+| **CPU** | Overview · CPU hogs · Processor lab · About |
+| **RAM** | Overview · RAM hoarders · Memory lab · About |
+| **Disk** | Overview · Disk hogs · Storage lab · About |
+| **Network** | Overview · Wi-Fi · Interfaces · Talkers · Data · Network lab · About |
+
+Connect to Wi-Fi, kill a memory hoarder, switch power profile, follow a
+different filesystem — all of it still works, because it is the same code.
+
+---
+
+## Settings
+
+Every setting the four plugins had, grouped by domain, plus the one decision
+that only exists once they share a bar entry: what the icon follows.
+
+<div align="center">
+<img src="docs/img/settings.png" width="820" alt="Settings page: bar icon source, then per-domain animation, grouping and readout choices">
+</div>
+
+Settings live in the widget's own `shell.json` entry, namespaced per domain
+(`cpu.displayMode`, `ram.groupByApp`, `disk.mountpoint`, `barSource`), so the
+four no longer compete for the same keys.
+
+---
 
 ## Install
 
 ```bash
+git clone https://github.com/nixfred/pulse.git
+cd pulse
 python3 install.py
 ```
 
-Publishes the plugin, installs and starts the four user services, places the
-widget on the right of the bar, and disables the four plugins it replaces
-without deleting them — going back is one `omarchy plugin enable` away.
+The installer publishes the plugin atomically, installs and starts the four
+collector services, puts the widget on the right of your bar, and disables the
+four plugins it replaces without deleting them.
+
+Requires [Omarchy](https://omarchy.org) with Quickshell, and `python3`.
+
+---
+
+## No scrolling, ever
+
+Every page fits on one screen. The panel is handed its real content height and
+grows to the room the screen has, the Constraints page shows each domain's top
+readings with the rest one click away, and the chooser lays nineteen readouts
+out in two columns rather than one long list.
+
+| Page | Height |
+|---|---|
+| About | 543 px |
+| Overview | 711 px |
+| Chooser | 817 px |
+| Constraints | 925 px |
+| Network | 938 px |
+| CPU | 979 px |
+| Settings | 1022 px |
+
+---
 
 ## IPC
 
@@ -61,24 +162,59 @@ without deleting them — going back is one `omarchy plugin enable` away.
 omarchy-shell nixfred.pulse open
 omarchy-shell nixfred.pulse show net              # jump to a domain
 omarchy-shell nixfred.pulse showTab net 1         # domain, then sub-tab
-omarchy-shell nixfred.pulse display cpu 2         # that domain's bar readout
+omarchy-shell nixfred.pulse constraints           # the ranking
+omarchy-shell nixfred.pulse modes                 # the readout chooser
+omarchy-shell nixfred.pulse pin auto              # icon follows the constraint
+omarchy-shell nixfred.pulse pin cpu               # or pin it
+omarchy-shell nixfred.pulse display cpu 2         # that domain's readout
 omarchy-shell nixfred.pulse historyRange ram 86400
-omarchy-shell nixfred.pulse modes                 # settings
 omarchy-shell nixfred.pulse status                # all four, as JSON
 ```
 
 `status` nests each domain's original status object under its key, so anything
 that scraped one of the four plugins needs only to reach one level deeper.
 
-## Why the collectors were left alone
+---
 
-Four Python collectors, four user units, four state directories — unchanged.
-They are the part that had been running for weeks and the part that holds the
-history, so the merge deliberately stopped at the UI. It cost no recorded data,
-and any one of them can still be debugged on its own.
+## How it is built
 
-Settings are stored in the widget's `shell.json` entry, namespaced per domain
-(`cpu.displayMode`, `ram.groupByApp`, `disk.mountpoint`, `net.inBar`), so the
-four no longer compete for the same keys.
+```
+Panel.qml                 bar icon, page switcher, the two merged pages' host
+Model.js                  helpers for the merged chrome only
+sections/
+  Constraints.js          the severity model — the one piece of shared judgement
+  OverviewPage.qml        four cards
+  ConstraintsPage.qml     the ranking
+  ChooserPage.qml         every readout
+  SettingsPage.qml        every setting
+  AboutPage.qml           what this replaced
+  CpuSection.qml          ┐
+  RamSection.qml          │ the four original panels, ported whole
+  DiskSection.qml         │ (plus their chips, graphs and models)
+  NetSection.qml          ┘
+collectors/               the four Python recorders and their user units
+```
+
+Each section gets a small host bridge supplying the members the original code
+already used — `bar`, `opened`, `setting()`, `close()` — so the ported bodies
+needed no rewriting at all.
+
+**The collectors were deliberately left alone.** Four daemons, four user units,
+four state directories, unchanged. The merge stopped at the UI, so it cost no
+recorded history and any one of them can still be debugged on its own.
+
+---
+
+## Credits
+
+Pulse is the merge of four plugins:
+
+- [CPU Pulse](https://github.com/nixfred/omacpu)
+- [RAM Pulse](https://github.com/nixfred/ram.plugin.omarchy)
+- [Disk Pulse](https://github.com/nixfred/disk.pulse)
+- [Net Pulse](https://github.com/nixfred/omanet.plugin.omarchy)
+
+Built for [Omarchy](https://omarchy.org) by [Fred Nix](https://nixfred.com) ·
+more plugins at [omarchy.nixfred.com](https://omarchy.nixfred.com)
 
 MIT.

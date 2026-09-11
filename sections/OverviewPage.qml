@@ -34,7 +34,7 @@ Item {
                 readonly property string key: host.domainKeys[index]
                 readonly property bool worst: host.worst === modelData
                 width: grid.width
-                height: 136
+                height: 118
                 radius: 14
                 color: root.card
                 // The worst domain wears its own tint on the border, so the
@@ -94,6 +94,14 @@ Item {
                                 textFormat: Text.PlainText
                             }
                         }
+                        // The card's own worst reading, named. Without it a
+                        // card can look calm while one number inside it is not.
+                        Text {
+                            text: cardRect.modelData.constraintLabel + ' · ' + cardRect.modelData.constraintValue
+                            color: root.inkDim
+                            font.pixelSize: 9
+                            textFormat: Text.PlainText
+                        }
                     }
 
                     // The same history line the domain's own Overview draws,
@@ -101,11 +109,12 @@ Item {
                     // is the identical component.
                     Item {
                         anchors.verticalCenter: parent.verticalCenter
-                        // The domain's own history line, given the height its
-                        // axis furniture was drawn for. Anything shorter and
-                        // the tick labels collide with the trace.
+                        // The domain's own history trace with its axis labels
+                        // turned off, so the card shows the shape of the last
+                        // hour without the scaffolding that needs a full-height
+                        // chart to fit. The labelled version is one click away.
                         width: parent.width - 88 - 176 - 28 - 66
-                        height: 106
+                        height: 88
                         clip: true
                         Loader {
                             anchors.fill: parent
@@ -148,6 +157,6 @@ Item {
         color: root.inkDim
         font.pixelSize: 10
         textFormat: Text.PlainText
-        text: 'Each card opens that domain\'s full dashboard — every reading, table and control the separate plugin had.'
+        text: 'Each card opens that domain\'s full dashboard — every reading, table and control the separate plugin had. Constraints ranks all four against one another.'
     }
 }
