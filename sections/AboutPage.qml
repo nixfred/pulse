@@ -103,29 +103,67 @@ Item {
         // follows.
         Row {
             width: parent.width
-            spacing: 8
-            Text {
-                text: 'Source'
-                color: root.inkDim
-                font.pixelSize: 12
-                font.bold: true
-                textFormat: Text.PlainText
+            spacing: 12
+
+            // The byline is a button-sized target, not a word in a sentence.
+            // An About page whose links need aiming at does not get followed.
+            Rectangle {
+                id: sitePlate
+                width: siteText.implicitWidth + 40
+                height: 44
+                radius: 10
+                color: siteArea.containsMouse ? Qt.alpha(Color.accent, 0.26) : Qt.alpha(Color.accent, 0.14)
+                border.color: Qt.alpha(Color.accent, siteArea.containsMouse ? 0.9 : 0.55)
+                border.width: 2
+                Behavior on color { ColorAnimation { duration: 120 } }
+                Text {
+                    id: siteText
+                    anchors.centerIn: parent
+                    text: 'nixfred.com'
+                    color: root.ink
+                    font.family: Style.font.family
+                    font.pixelSize: 19
+                    font.bold: true
+                    textFormat: Text.PlainText
+                }
+                MouseArea {
+                    id: siteArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.openUrl(root.siteUrl)
+                }
             }
-            Link { text: 'github.com/nixfred/pulse'; url: root.repoUrl }
-            Text { text: '·'; color: root.inkDim; font.pixelSize: 12 }
-            Text {
-                text: 'Built by'
-                color: root.inkDim
-                font.pixelSize: 12
-                font.bold: true
-                textFormat: Text.PlainText
+
+            Rectangle {
+                width: repoText.implicitWidth + 34
+                height: 44
+                radius: 10
+                color: repoArea.containsMouse ? Style.hoverFill : Style.normalFill
+                border.color: repoArea.containsMouse ? Style.hoverBorderColor : Style.normalBorderColor
+                Behavior on color { ColorAnimation { duration: 120 } }
+                Text {
+                    id: repoText
+                    anchors.centerIn: parent
+                    text: 'github.com/nixfred/pulse'
+                    color: root.inkDim
+                    font.pixelSize: 14
+                    textFormat: Text.PlainText
+                }
+                MouseArea {
+                    id: repoArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.openUrl(root.repoUrl)
+                }
             }
-            Link { text: 'nixfred.com'; url: root.siteUrl }
-            Text { text: '·'; color: root.inkDim; font.pixelSize: 12 }
+
             Text {
+                anchors.verticalCenter: parent.verticalCenter
                 text: 'MIT'
                 color: root.inkDim
-                font.pixelSize: 12
+                font.pixelSize: 13
                 textFormat: Text.PlainText
             }
         }

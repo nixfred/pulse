@@ -1,0 +1,7 @@
+I had four Omarchy plugins watching CPU, RAM, disk and network. Four bar entries, four popups, and every time the machine felt slow I still had to open all four to work out which one was actually the problem.
+
+So I merged them into one icon. It isn't a fixed reading. It becomes whichever of the four is currently the biggest constraint and tells you which one that is and why — right now mine reads RAM · FREE HEADROOM, and if the disk starts filling it switches on its own. Every reading across all four domains is scored on one shared severity scale, which is what makes a hot drive and a busy processor comparable in the first place, and a new Constraints page ranks all four worst-first with a plain sentence on what each one is costing you.
+
+Nothing got summarised away. Right-click the icon and you get all nineteen readouts priced against live values. Each domain keeps its entire original dashboard — the same tables, the same controls, the same seven days of history, reading the same collectors as before. Every page fits on one screen. Nothing scrolls.
+
+MIT, built for Omarchy: github.com/nixfred/pulse

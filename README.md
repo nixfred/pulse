@@ -8,10 +8,14 @@
 
 CPU, memory, storage and network — four dashboards, one widget, zero guessing about which one is the problem.
 
+## [nixfred.com](https://nixfred.com)
+
+[![nixfred.com](https://img.shields.io/badge/nixfred.com-4fc9d6?style=for-the-badge&logoColor=white)](https://nixfred.com)
+[![More Omarchy plugins](https://img.shields.io/badge/more%20Omarchy%20plugins-0d1a26?style=for-the-badge)](https://omarchy.nixfred.com)
+
 [![Omarchy](https://img.shields.io/badge/Omarchy-plugin-00d3f2?style=flat-square)](https://omarchy.org)
 [![Quickshell](https://img.shields.io/badge/Quickshell-QML-5e81ac?style=flat-square)](https://quickshell.org)
 [![License](https://img.shields.io/badge/license-MIT-a3be8c?style=flat-square)](LICENSE)
-[![nixfred.com](https://img.shields.io/badge/built%20by-nixfred.com-e0a458?style=flat-square)](https://nixfred.com)
 
 </div>
 
@@ -221,7 +225,10 @@ Pulse is the merge of four plugins:
 - [Disk Pulse](https://github.com/nixfred/disk.pulse)
 - [Net Pulse](https://github.com/nixfred/omanet.plugin.omarchy)
 
-Built for [Omarchy](https://omarchy.org) by [Fred Nix](https://nixfred.com) ·
-more plugins at [omarchy.nixfred.com](https://omarchy.nixfred.com)
+Built for [Omarchy](https://omarchy.org) by Fred Nix.
+
+## → [nixfred.com](https://nixfred.com)
+
+More Omarchy plugins: **[omarchy.nixfred.com](https://omarchy.nixfred.com)**
 
 MIT.

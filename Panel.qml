@@ -149,6 +149,8 @@ Panel {
             // Content geometry, so a caller can crop a screenshot to the panel
             // without guessing where it ends.
             panelWidth: panel.contentWidth, panelHeight: panel.contentHeight,
+            panelX: Math.round(panel.cardOrigin.x), panelY: Math.round(panel.cardOrigin.y),
+            panelPad: panel.padding,
             cpu: cpuSection.status ? JSON.parse(cpuSection.status()) : null,
             ram: ramSection.status ? JSON.parse(ramSection.status()) : null,
             disk: diskSection.status ? JSON.parse(diskSection.status()) : null,
