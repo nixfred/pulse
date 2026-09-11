@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/img/announce-card.png" width="900" alt="Pulse: one bar icon for four domains. The bar icon reading RAM · FREE HEADROOM beside the Overview panel showing CPU, RAM, Disk and Network cards with live history traces">
+
 # Pulse
 
 **One Omarchy bar icon that always shows you the thing holding your machine back.**
@@ -41,6 +43,9 @@ whole, behind their own names.
 <div align="center">
 <img src="docs/img/overview.png" width="820" alt="Pulse Overview: four cards, one per domain, each with its own chip, readout, verdict and history trace">
 </div>
+
+Each card is that domain's own chip, its own readout in its own grammar, its own
+verdict, and its own history trace. Clicking one opens that domain in full.
 
 ---
 
