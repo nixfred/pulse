@@ -271,6 +271,27 @@ Item {
     // hands it a new array identity on every evaluation, which destroys and
     // rebuilds every delegate each time.
     readonly property var topConstraints: root.constraints.slice(0, 3)
+    // ---- demand-driven process scanning -------------------------------
+    // The per-process walk in this domain's collector is essentially its
+    // entire cost — 0.29 s every 9 s on an idle machine, against 0.000 s for
+    // the readings it sits beside — and the only thing that ever displays it
+    // is the tab below. This marker is refreshed while that tab is on screen;
+    // the collector skips the walk whenever it is stale, which is nearly
+    // always. A resource monitor should not spend a slice of a core building
+    // a table nobody has open.
+    readonly property bool wantsProcesses: root.opened && root.tab === 1
+    FileView { id: wantFile; path: root.stateDir + '/want-processes'; printErrors: false }
+    function markProcessesWanted() { wantFile.setText(String(Date.now())) }
+    onWantsProcessesChanged: if (root.wantsProcesses) root.markProcessesWanted()
+    // Refreshed well inside the collector's 30 s staleness window, so a long
+    // look at the table never has it blink out mid-read.
+    Timer {
+        interval: 10000
+        repeat: true
+        running: root.wantsProcesses
+        triggeredOnStart: true
+        onTriggered: root.markProcessesWanted()
+    }
     readonly property string headline: root.stale ? '—' : Model.readout(root.disk, root.mode, root.mountpoint)
     readonly property string tag: Model.modeTag(root.disk, root.mode)
     property Component barChip: Component { DiskChip {compact:true;body:root.themeBg;glint:root.barForeground;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.tint;animate:!root.stale && root.setting('animated',true)} }

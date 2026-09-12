@@ -458,6 +458,28 @@ def atomic(name, value):
     finally:
         tmp.unlink(missing_ok=True)
 
+# ---- demand-driven process scanning ---------------------------------------
+# The per-process walk below is essentially the entire cost of this daemon.
+# Measured on an idle machine: the scan runs 0.29 s every 9 s (~3.3% of a core)
+# while the readings it sits beside cost 0.000 s. Its only consumer is one tab
+# in the panel, so scanning while nobody has that tab open spends a permanent
+# slice of a core building a table that is thrown away unread.
+#
+# The panel refreshes `want-processes` while the tab is on screen. No marker,
+# or a stale one, means nothing is looking and the walk is skipped. History is
+# unaffected: it is recorded from the metrics before the process table is ever
+# attached.
+WANT_PROCESSES = STATE / 'want-processes'
+WANT_TTL = 30
+
+
+def processes_wanted():
+    try:
+        return time.time() - WANT_PROCESSES.stat().st_mtime < WANT_TTL
+    except OSError:
+        return False
+
+
 def daemon():
     # prepare_state() still refuses an unsafe state directory outright --
     # ownership and O_NOFOLLOW on the directory itself are unconditional even
@@ -491,6 +513,7 @@ def daemon():
         db = None
         previous = None
         last_history = last_procs = 0
+        was_wanted = False
         rows, groups = [], []
         errors = {}
         if blocked:
@@ -520,7 +543,8 @@ def daemon():
                             if db is not None:
                                 db.close()
                                 db = None
-                    if start-last_procs >= 9:
+                    wanted = processes_wanted()
+                    if wanted and (start-last_procs >= 9 or not was_wanted):
                         last_procs = start
                         try:
                             rows, groups = hoarders()
@@ -529,6 +553,9 @@ def daemon():
                             rows, groups = [], []
                             errors['processes'] = str(e)
                             print(f'RAM Pulse processes: {type(e).__name__}: {e}', flush=True)
+                    if not wanted:
+                        rows, groups = [], []
+                    was_wanted = wanted
                     m['hoarders'] = rows
                     m['groups'] = groups
                     m['collectorErrors'] = dict(errors)

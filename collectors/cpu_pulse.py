@@ -228,6 +228,31 @@ def frequency():
             'governor': read(base / 'scaling_governor').strip(), 'driver': read(base / 'scaling_driver').strip(),
             'epp': read(base / 'energy_performance_preference').strip(), 'turbo': turbo}
 
+# The power profile is a fork+exec of powerprofilesctl, measured at 0.146 s —
+# on its own, 82% of this daemon's entire cost when it ran every tick. The
+# value only changes when somebody changes it, so it is cached. The panel's own
+# profile action invalidates the cache by touching this file, so a switch made
+# from the dashboard still shows up on the next tick rather than in half a
+# minute.
+PROFILE_TTL = 30
+PROFILE_STAMP = STATE / 'profile-changed'
+_profile = {'value': '', 'at': 0.0, 'stamp': 0.0}
+
+
+def current_profile():
+    now = time.monotonic()
+    try:
+        stamp = PROFILE_STAMP.stat().st_mtime
+    except OSError:
+        stamp = 0.0
+    if _profile['at'] and now - _profile['at'] < PROFILE_TTL and stamp == _profile['stamp']:
+        return _profile['value']
+    _profile['value'] = run(['powerprofilesctl', 'get']).strip()
+    _profile['at'] = now
+    _profile['stamp'] = stamp
+    return _profile['value']
+
+
 def metrics(previous=None):
     raw = read('/proc/stat')
     rows = cpu_lines(raw)
@@ -294,7 +319,7 @@ def metrics(previous=None):
             'running': counters.get('procs_running', 0), 'blocked': counters.get('procs_blocked', 0),
             'psi': psi, 'rates': rates, 'counters': counters, 'freq': freq, 'temp': core_temp, 'sensors': sensors,
             'throttle': throttle, 'watts': watts, 'energy': energy,
-            'profile': run(['powerprofilesctl', 'get']).strip(),
+            'profile': current_profile(),
             'uptime': float((read('/proc/uptime').split() or ['0'])[0]), 'raw': rows}
 
 def db_open():
@@ -321,6 +346,28 @@ def atomic(name, value):
     tmp.write_text(json.dumps(value, separators=(',', ':'), ensure_ascii=True))
     tmp.replace(path)
 
+# ---- demand-driven process scanning ---------------------------------------
+# The per-process walk below is essentially the entire cost of this daemon.
+# Measured on an idle machine: the scan runs 0.29 s every 9 s (~3.3% of a core)
+# while the readings it sits beside cost 0.000 s. Its only consumer is one tab
+# in the panel, so scanning while nobody has that tab open spends a permanent
+# slice of a core building a table that is thrown away unread.
+#
+# The panel refreshes `want-processes` while the tab is on screen. No marker,
+# or a stale one, means nothing is looking and the walk is skipped. History is
+# unaffected: it is recorded from the metrics before the process table is ever
+# attached.
+WANT_PROCESSES = STATE / 'want-processes'
+WANT_TTL = 30
+
+
+def processes_wanted():
+    try:
+        return time.time() - WANT_PROCESSES.stat().st_mtime < WANT_TTL
+    except OSError:
+        return False
+
+
 def daemon():
     with (STATE / 'collector.lock').open('w') as lock:
         try:
@@ -331,6 +378,7 @@ def daemon():
         previous = None
         ticks = None
         last_history = last_procs = 0
+        was_wanted = False
         rows = []
         while True:
             start = time.monotonic()
@@ -340,9 +388,13 @@ def daemon():
                     record(db, m)
                     atomic('history.json', {str(s): history(db, s, m['ts']) for s in (3600, 86400, 604800)})
                     last_history = start
-                if start-last_procs >= 9:
+                wanted = processes_wanted()
+                if wanted and (start-last_procs >= 9 or not was_wanted):
                     rows, ticks = hogs(ticks, m['monotonic'])
                     last_procs = start
+                elif not wanted:
+                    rows = []
+                was_wanted = wanted
                 m['hogs'] = rows
                 if m['warm']:
                     atomic('snapshot.json', m)
@@ -415,12 +467,22 @@ def profile(name):
         raise RuntimeError('power-profiles-daemon is not available.')
     if current == name:
         return {'message': 'Power profile is already '+name+'.'}
+
+    def invalidate():
+        # The daemon caches the profile; touching this tells it to re-read on
+        # its next tick instead of up to PROFILE_TTL later.
+        try:
+            STATE.mkdir(parents=True, exist_ok=True)
+            PROFILE_STAMP.touch()
+        except OSError:
+            pass
     try:
         result = subprocess.run(['powerprofilesctl', 'set', name], capture_output=True, text=True, timeout=5, check=False)
     except (OSError, subprocess.TimeoutExpired):
         raise RuntimeError('powerprofilesctl did not respond.')
     if result.returncode:
         raise RuntimeError('Profile change refused: '+(result.stderr.strip().splitlines() or ['no reason given'])[-1][:120])
+    invalidate()
     return {'message': 'Power profile: '+current+' → '+name+'. The clock and temperature will settle over the next few samples.'}
 
 def visit(link):
