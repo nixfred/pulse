@@ -123,7 +123,7 @@ Panel {
         // Naming a "constraint" that scores 0.004 makes the icon sound alarmed
         // about nothing. When nothing is tight, say so.
         if (root.allClear) return 'ALL CLEAR'
-        return root.barDomain.sectionTitle.toUpperCase() + ' · ' + root.barDomain.constraintLabel.toUpperCase()
+        return root.barDomain.sectionTitle.toUpperCase() + ' · ' + Constraints.shortLabel(root.barDomain.topConstraint)
     }
     function pinBar(key, mode) {
         // Anything that is not auto or a real domain would persist into
@@ -166,6 +166,10 @@ Panel {
             // without guessing where it ends.
             panelWidth: panel.contentWidth, panelHeight: panel.contentHeight,
             panelX: Math.round(panel.cardOrigin.x), panelY: Math.round(panel.cardOrigin.y),
+            // What the entry reserves on the bar, and what it actually draws.
+            // The first must never be smaller than the second, or the widget
+            // paints over its neighbour.
+            barReserved: Math.round(button.implicitWidth), barDrawn: Math.round(barRow.implicitWidth + 12),
             panelPad: panel.padding,
             cpu: cpuSection.status ? JSON.parse(cpuSection.status()) : null,
             ram: ramSection.status ? JSON.parse(ramSection.status()) : null,
@@ -249,39 +253,54 @@ Panel {
             if (b === Qt.RightButton) { root.chooseMode = true; root.open() }
             else { root.chooseMode = false; root.active = 'overview'; root.toggle() }
         }
+        // The entry is allowed to change width as the reading changes, but it
+        // must never draw outside the width it reserves, or it paints over its
+        // neighbour on the bar. Two things guarantee that:
+        //
+        //   * the Loader sits directly in the Row. It used to be wrapped in an
+        //     Item whose width came from the Loader's implicitWidth while the
+        //     Loader was anchored centerIn to that same Item — a sizing loop,
+        //     which can resolve to zero and drop the chip out of the measured
+        //     width entirely.
+        //   * the caption is bounded. Constraint labels carry a mount path on
+        //     the Disk domain ("FREE SPACE ON /HOME/PI/GOOGLE"), so an
+        //     unbounded caption could ask the bar to re-lay out by a hundred
+        //     pixels between one sample and the next.
+        readonly property int captionCeiling: 110
         Row {
             id: barRow
             anchors.centerIn: parent
             spacing: 5
-            Item {
-                width: chipLoader.implicitWidth
-                height: chipLoader.implicitHeight
+            Loader {
+                id: chipLoader
                 anchors.verticalCenter: parent.verticalCenter
-                Loader {
-                    id: chipLoader
-                    anchors.centerIn: parent
-                    // Keyed on the domain so the chip is rebuilt when the icon
-                    // switches, rather than a stale one being re-bound.
-                    sourceComponent: root.barDomain ? root.barDomain.barChip : null
-                }
+                // Keyed on the domain so the chip is rebuilt when the icon
+                // switches, rather than a stale one being re-bound.
+                sourceComponent: root.barDomain ? root.barDomain.barChip : null
             }
             Column {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 0
                 Text {
+                    id: barHeadline
                     text: root.barDomain ? root.barDomain.headline : '—'
                     color: root.barForeground
                     font.family: Style.font.family
                     font.pixelSize: 12
                     font.bold: true
+                    elide: Text.ElideRight
+                    width: Math.min(implicitWidth, button.captionCeiling)
                     textFormat: Text.PlainText
                 }
                 Text {
+                    id: barCaptionText
                     text: root.barCaption
                     color: root.barDomain ? root.barDomain.tint : root.barForeground
                     font.pixelSize: 7
                     font.letterSpacing: 0.6
                     font.bold: true
+                    elide: Text.ElideRight
+                    width: Math.min(implicitWidth, button.captionCeiling)
                     textFormat: Text.PlainText
                 }
             }

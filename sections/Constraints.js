@@ -107,6 +107,26 @@ function worstOf(list) {
     return top
 }
 
+// Short forms for the bar caption. The Constraints page has room for a whole
+// clause ("Free space on /home/pi/google"); a bar entry does not, and an entry
+// that grows with the length of a mount path will eventually push into
+// whatever sits beside it. Keyed on entry.key, so a label can be reworded on
+// the page without changing what the icon says.
+var SHORT = {
+    load: 'BUSY', threads: 'SATURATED', thermal: 'HOT', pressure: 'CONTENDED',
+    profile: 'CAPPED', throttle: 'THROTTLING',
+    headroom: 'LOW ROOM', swap: 'SWAPPING', stall: 'STALLING', zram: 'ZRAM',
+    space: 'LOW SPACE', othermount: 'LOW SPACE', busy: 'BUSY', wear: 'WORN',
+    smart: 'SMART',
+    offline: 'OFFLINE', captive: 'PARTIAL', latency: 'LATENCY',
+    loss: 'LOSS', signal: 'SIGNAL', gateway: 'GATEWAY'
+}
+
+function shortLabel(row) {
+    if (!row) return ''
+    return SHORT[row.key] || String(row.label || '').toUpperCase()
+}
+
 // ---- CPU ----------------------------------------------------------------
 function cpu(c, stale) {
     if (stale || !c || !c.ts) return offline('CPU', 'cpu-pulse.service')
