@@ -298,6 +298,19 @@ def metrics(previous=None):
     freq['peak'] = max(known) if known else None
     throttle = {'package': read_int(SYS_CPU / 'cpu0/thermal_throttle/package_throttle_count') or 0,
                 'core': sum(read_int(f) or 0 for f in SYS_CPU.glob('cpu*/thermal_throttle/core_throttle_count'))}
+    # Both counters are cumulative since boot, so the totals only ever grow and
+    # say nothing about now: a laptop that throttled once this morning would
+    # read as throttling forever. The panel scores the rate instead, smoothed
+    # over roughly half a minute so a single event does not spike it to
+    # twenty a minute on a three-second tick.
+    prev_thr = previous.get('throttle') if previous else None
+    if prev_thr and elapsed > 0:
+        grew = max(0, (throttle['package'] - (prev_thr.get('package') or 0)) + (throttle['core'] - (prev_thr.get('core') or 0)))
+        instant = grew / elapsed * 60
+        before = prev_thr.get('perMinute')
+        throttle['perMinute'] = instant if before is None else before + (instant - before) * 0.1
+    else:
+        throttle['perMinute'] = None
     watts = None
     energy = read_int('/sys/class/powercap/intel-rapl:0/energy_uj')
     if energy is not None and previous and previous.get('energy') is not None and elapsed > 0:

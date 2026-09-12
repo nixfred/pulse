@@ -160,12 +160,18 @@ function cpu(c, stale) {
     // throttle is {package, core} counters, not a flag. Testing the object
     // itself is always true, which reported a permanent clock cap on a machine
     // that had never throttled.
+    // Those counters are also cumulative since boot, so scoring the total made
+    // any machine that had throttled once read as throttling forever — gus sat
+    // at 0.97 with 40,000 events accumulated over sixteen hours while throttling
+    // four times a minute at idle. The collector now reports a smoothed rate,
+    // and only a sustained rate is a constraint. A collector too old to report
+    // the rate gets no row at all, rather than the misleading total.
     var thr = c.throttle || {}
-    var thrCount = (Number(thr.package) || 0) + (Number(thr.core) || 0)
-    if (thrCount > 0) {
-        out.push(entry('throttle', 'Throttling events', String(thrCount),
-            'The kernel has counted an active clock cap. Heat or power delivery is limiting the processor.',
-            ramp(thrCount, 0, 8)))
+    var perMinute = Number(thr.perMinute)
+    if (thr.perMinute !== null && thr.perMinute !== undefined && isFinite(perMinute)) {
+        out.push(entry('throttle', 'Throttling rate', (perMinute < 10 ? perMinute.toFixed(1) : Math.round(perMinute)) + ' / min',
+            'How often the kernel is capping the clock right now. An occasional event is normal on a laptop; a sustained rate means heat or power delivery is limiting the processor.',
+            ramp(perMinute, 60, 1200)))
     }
     return rank(out)
 }
