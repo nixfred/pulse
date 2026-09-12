@@ -69,8 +69,15 @@ Item {
             }
             c.fillStyle=root.body; c.strokeStyle=root.tint; c.lineWidth=root.compact?1.2:2
             c.fillRect(x,y,body,body)
-            c.shadowColor=root.tint; c.shadowBlur=root.compact?5:12
-            c.strokeRect(x,y,body,body); c.shadowBlur=0
+            // Glow as a few widening, fading strokes, not shadowBlur. The blur is
+            // rasterised on the GUI thread and cost 30-70 ms per paint at card size,
+            // at ten paints a second per chip, which is what made the panel hesitate
+            // as it opened. These strokes cost about a millisecond.
+            var haloBase=c.lineWidth
+            c.save(); c.strokeStyle=root.tint
+            for(var halo=(root.compact?2:4); halo>0; halo--){ c.globalAlpha=0.09; c.lineWidth=haloBase+halo*(root.compact?1.2:2.4); c.strokeRect(x,y,body,body) }
+            c.restore()
+            c.strokeRect(x,y,body,body)
             c.save();c.beginPath();c.rect(x+2,y+2,body-4,body-4);c.clip()
             c.strokeStyle=Qt.alpha(root.tint,0.18);c.lineWidth=0.8
             for(var row=1;row<4;row++){ c.beginPath();c.moveTo(x,y+body*row/4);c.lineTo(x+body,y+body*row/4);c.stroke() }

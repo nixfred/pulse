@@ -521,6 +521,22 @@ MODEL_PATCHES = {
          "    if (psi >= 10 && driveAgrees) return 'STORAGE IS STALLING'"),
     ],
 }
+# The four chips paint a 12px shadowBlur on the GUI thread: 30-70 ms per paint
+# at Overview-card size, ten paints a second each, which stalled the panel as
+# it opened. Replaced with a few widening, fading strokes that cost ~1 ms.
+CHIP_GLOW_OLD = ("            c.shadowColor=root.tint; c.shadowBlur=root.compact?5:12\n"
+                 "            c.strokeRect(x,y,body,body); c.shadowBlur=0")
+CHIP_GLOW_NEW = ("            // Glow as a few widening, fading strokes, not shadowBlur. The blur is\n"
+                 "            // rasterised on the GUI thread and cost 30-70 ms per paint at card size,\n"
+                 "            // at ten paints a second per chip, which is what made the panel hesitate\n"
+                 "            // as it opened. These strokes cost about a millisecond.\n"
+                 "            var haloBase=c.lineWidth\n"
+                 "            c.save(); c.strokeStyle=root.tint\n"
+                 "            for(var halo=(root.compact?2:4); halo>0; halo--){ c.globalAlpha=0.09; c.lineWidth=haloBase+halo*(root.compact?1.2:2.4); c.strokeRect(x,y,body,body) }\n"
+                 "            c.restore()\n"
+                 "            c.strokeRect(x,y,body,body)")
+for chip in ('CpuChip.qml', 'DiskChip.qml', 'NetChip.qml', 'MemoryChip.qml'):
+    MODEL_PATCHES[chip] = [(CHIP_GLOW_OLD, CHIP_GLOW_NEW)]
 for fname, edits in MODEL_PATCHES.items():
     f = os.path.join(DST, 'sections', fname)
     t = open(f).read()
