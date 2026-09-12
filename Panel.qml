@@ -318,6 +318,20 @@ Panel {
         font.bold: true
         textFormat: Text.PlainText
     }
+    // Pages are created the first time they are shown and kept while they
+    // remain the current page, including through the close fade. Building
+    // every dashboard on click is what made the popup take seconds to appear;
+    // tearing them down on close made it take seconds to go. The bar only
+    // needs the four section objects below, which hold readings, not trees.
+    component PageLoader: Loader {
+        property string pageKey: ''
+        property bool chooser: false
+        width: parent ? parent.width : 0
+        readonly property bool onPage: chooser ? root.chooseMode : (!root.chooseMode && root.active === pageKey)
+        active: onPage && (root.opened || item !== null)
+        height: item ? item.implicitHeight : 0
+        onLoaded: if (item) item.width = Qt.binding(function () { return width })
+    }
     component Action: Rectangle {
         id: act
         property string text: ''
@@ -502,17 +516,13 @@ Panel {
                         }
                     }
 
-                    ConstraintsPage {
-                        host: root
-                        width: parent.width
-                        visible: !root.chooseMode && root.active === 'constraints'
-                        height: visible ? implicitHeight : 0
+                    PageLoader {
+                        pageKey: 'constraints'
+                        sourceComponent: Component { ConstraintsPage { host: root } }
                     }
-                    OverviewPage {
-                        host: root
-                        width: parent.width
-                        visible: !root.chooseMode && root.active === 'overview'
-                        height: visible ? implicitHeight : 0
+                    PageLoader {
+                        pageKey: 'overview'
+                        sourceComponent: Component { OverviewPage { host: root } }
                     }
                     CpuSection {
                         id: cpuSection
@@ -542,24 +552,18 @@ Panel {
                         visible: !root.chooseMode && root.active === 'net'
                         height: visible ? implicitHeight : 0
                     }
-                    SettingsPage {
-                        host: root
-                        width: parent.width
-                        visible: !root.chooseMode && root.active === 'settings'
-                        height: visible ? implicitHeight : 0
+                    PageLoader {
+                        pageKey: 'settings'
+                        sourceComponent: Component { SettingsPage { host: root } }
                     }
-                    AboutPage {
-                        host: root
-                        width: parent.width
-                        visible: !root.chooseMode && root.active === 'about'
-                        height: visible ? implicitHeight : 0
+                    PageLoader {
+                        pageKey: 'about'
+                        sourceComponent: Component { AboutPage { host: root } }
                     }
 
-                    ChooserPage {
-                        host: root
-                        width: parent.width
-                        visible: root.chooseMode
-                        height: visible ? implicitHeight : 0
+                    PageLoader {
+                        chooser: true
+                        sourceComponent: Component { ChooserPage { host: root } }
                     }
 
                     Rectangle { width: parent.width; height: 1; color: root.rule }
