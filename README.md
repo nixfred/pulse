@@ -15,6 +15,7 @@ CPU, memory, storage and network — four dashboards, one widget, zero guessing 
 
 [![Omarchy](https://img.shields.io/badge/Omarchy-plugin-00d3f2?style=flat-square)](https://omarchy.org)
 [![Quickshell](https://img.shields.io/badge/Quickshell-QML-5e81ac?style=flat-square)](https://quickshell.org)
+[![Version](https://img.shields.io/github/manifest-json/v/nixfred/pulse?style=flat-square&label=version&color=4fc9d6)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-a3be8c?style=flat-square)](LICENSE)
 
 </div>
@@ -213,6 +214,17 @@ needed no rewriting at all.
 **The collectors were deliberately left alone.** Four daemons, four user units,
 four state directories, unchanged. The merge stopped at the UI, so it cost no
 recorded history and any one of them can still be debugged on its own.
+
+---
+
+## Versions
+
+The version lives in one place, `manifest.json`. The panel header, the About
+page, the bar tooltip, `omarchy-shell nixfred.pulse status` and the badge at the
+top of this page all read it from there, so none of them can disagree.
+
+Every release bumps it, adds an entry to [CHANGELOG.md](CHANGELOG.md), and is
+tagged `vX.Y.Z` — a fix bumps the patch, a new capability the minor.
 
 ---
 

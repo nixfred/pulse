@@ -237,8 +237,11 @@ Panel {
         // stacked lines, and the entry collapses.
         fixedHeight: vertical ? barRow.implicitHeight + 12 : -1
         tooltipText: {
-            var lines = [root.barAuto ? 'Pulse · following the biggest constraint'
-                                      : 'Pulse · pinned to ' + (root.barDomain ? root.barDomain.sectionTitle : root.barSource)]
+            // The version leads the tooltip so the running release is one hover away,
+            // read from manifest.json like everywhere else it appears.
+            var name = 'Pulse' + (root.version !== '' ? ' v' + root.version : '')
+            var lines = [root.barAuto ? name + ' · following the biggest constraint'
+                                      : name + ' · pinned to ' + (root.barDomain ? root.barDomain.sectionTitle : root.barSource)]
             for (var i = 0; i < root.domains.length; i++) {
                 var d = root.domains[i]
                 if (!d) continue
