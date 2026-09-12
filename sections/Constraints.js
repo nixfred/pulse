@@ -257,13 +257,36 @@ function disk(d, mountpoint, primary, drive, stale) {
         'The share of the last interval the drive spent servicing requests. Near full, every new read queues behind the ones already running.',
         ramp(rates.util, 60, 100)))
 
+    // PSI io counts every task sleeping in iowait as stalled on storage. Some
+    // event loops sleep in io_schedule() without ever touching a disk —
+    // io_uring completion waits in a terminal such as Ghostty are the reported
+    // case (issue #1) — and hold /proc/pressure/io near 80% on an idle NVMe.
+    // Pressure only counts as a storage constraint when a drive shows the same
+    // thing: busy time, latency, or a queue. Otherwise the rows stay on the
+    // page, say why, and never rank. With no drive telemetry at all there is
+    // nothing to check against, so PSI is trusted as before.
+    var drives = d.disks || []
+    var worstUtil = 0, worstAwait = 0, worstQueue = 0
+    for (var k = 0; k < drives.length; k++) {
+        var dr = drives[k] && drives[k].rates ? drives[k].rates : {}
+        worstUtil = Math.max(worstUtil, Number(dr.util) || 0)
+        worstAwait = Math.max(worstAwait, Number(dr.awaitRead) || 0, Number(dr.awaitWrite) || 0)
+        worstQueue = Math.max(worstQueue, Number(dr.queue) || 0)
+    }
+    var driveEvidence = drives.length === 0 || worstUtil >= 20 || worstAwait >= 10 || worstQueue >= 1
+    var discounted = !driveEvidence && ((Number(some.avg60) || 0) >= 5 || (Number(full.avg60) || 0) >= 1)
+    var why = ' No drive agrees (' + pct(worstUtil) + ' busy, ' + ms(worstAwait) + ' latency), so this is'
+            + ' iowait from something other than storage, such as io_uring event loops, and it is not'
+            + ' counted as a constraint.'
+
     out.push(entry('pressure', 'I/O pressure', pct(some.avg60),
-        'The share of the last minute something spent waiting on storage. Unlike throughput, this is the part you actually feel.',
-        ramp(some.avg60, 0, 20)))
+        'The share of the last minute something spent waiting on storage. Unlike throughput, this is the part you actually feel.'
+        + (discounted ? why : ''),
+        discounted ? Math.min(ramp(some.avg60, 0, 20), 0.2) : ramp(some.avg60, 0, 20), discounted))
 
     out.push(entry('stall', 'Full I/O stalls', pct(full.avg60),
-        'Time where everything was blocked on storage at once.',
-        ramp(full.avg60, 0, 5)))
+        'Time where everything was blocked on storage at once.' + (discounted ? why : ''),
+        discounted ? Math.min(ramp(full.avg60, 0, 5), 0.2) : ramp(full.avg60, 0, 5), discounted))
 
     if (drive) {
         var smart = drive.smart || {}

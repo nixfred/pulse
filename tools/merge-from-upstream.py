@@ -502,3 +502,33 @@ for stem,dom in OWNER.items():
     t=t.replace('import "Model.js" as Model','import "%sModel.js" as Model'%dom)
     open(f,'w').write(t)
 print('chip model imports repointed')
+
+# ---- fixes carried on top of the upstream models --------------------------
+# DiskModel.js is refreshed from the installed Disk Pulse plugin above, so a
+# fix made to the copy in sections/ would be silently reverted by the next run.
+# Each patch here is re-applied after the refresh, and is skipped rather than
+# failed when upstream has already taken the same change.
+MODEL_PATCHES = {
+    'DiskModel.js': [
+        # Issue #1: PSI io counts io_uring event loops that never touch a disk,
+        # so "stalling" requires the drive to agree.
+        ("    if (psi >= 10) return 'STORAGE IS STALLING'",
+         "    // PSI io also counts io_uring event loops that never touch a disk (issue\n"
+         "    // #1), so the verdict only says stalling when the drive agrees.\n"
+         "    var drain = drive && drive.rates ? Math.max(num(drive.rates.awaitRead), num(drive.rates.awaitWrite)) : 0\n"
+         "    var queue = drive && drive.rates ? num(drive.rates.queue) : 0\n"
+         "    var driveAgrees = !drive || !drive.rates || util >= 20 || drain >= 10 || queue >= 1\n"
+         "    if (psi >= 10 && driveAgrees) return 'STORAGE IS STALLING'"),
+    ],
+}
+for fname, edits in MODEL_PATCHES.items():
+    f = os.path.join(DST, 'sections', fname)
+    t = open(f).read()
+    for old, new in edits:
+        if new in t:
+            continue
+        if old not in t:
+            raise SystemExit('model patch no longer applies to %s:\n%s' % (fname, old))
+        t = t.replace(old, new, 1)
+    open(f, 'w').write(t)
+print('model patches applied')

@@ -291,7 +291,12 @@ function healthLabel(m, primary, drive, stale) {
     var free = primary ? num(primary.freePct) : 100
     var util = drive && drive.rates ? num(drive.rates.util) : 0
     if (free < 5) return 'DISK IS NEARLY FULL'
-    if (psi >= 10) return 'STORAGE IS STALLING'
+    // PSI io also counts io_uring event loops that never touch a disk (issue
+    // #1), so the verdict only says stalling when the drive agrees.
+    var drain = drive && drive.rates ? Math.max(num(drive.rates.awaitRead), num(drive.rates.awaitWrite)) : 0
+    var queue = drive && drive.rates ? num(drive.rates.queue) : 0
+    var driveAgrees = !drive || !drive.rates || util >= 20 || drain >= 10 || queue >= 1
+    if (psi >= 10 && driveAgrees) return 'STORAGE IS STALLING'
     if (drive && has(drive.temp) && has(drive.tempMax) && num(drive.temp) >= num(drive.tempMax)) return 'DRIVE IS RUNNING HOT'
     if (util >= 85) return 'DRIVE IS SATURATED'
     if (free < 15) return 'LOW HEADROOM'
