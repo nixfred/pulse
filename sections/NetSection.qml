@@ -538,6 +538,7 @@ Item {
                         Heading{text:'NEARBY NETWORKS';width:parent.width-260;font.pixelSize:13}
                         Label{text:root.wifiRows.length+' networks · scanning while this tab is open';font.pixelSize:10;width:260;horizontalAlignment:Text.AlignRight}
                     }
+                    Flow{width:parent.width;spacing:12
                     Repeater {
                         model:root.wifiRows.slice(root.wifiPage*8,root.wifiPage*8+8)
                         Rectangle {
@@ -547,7 +548,7 @@ Item {
                             readonly property bool prompting:root.passwordSsid!==''&&root.passwordSsid===modelData.ssid
                             readonly property bool busy:root.wifiKind!==''&&root.wifiSsid===modelData.ssid
                             readonly property bool enterprise:Model.security(modelData.security)==='Enterprise'
-                            width:mainColumn.width;height:prompting?92:58;radius:10
+                            width:(mainColumn.width-12)/2;height:prompting?92:58;radius:10
                             color:wmouse.containsMouse||prompting?root.surfaceHot:root.surface;border.color:modelData.connected?root.themeAccent:wmouse.containsMouse?root.hairlineHot:root.hairline
                             Behavior on height{NumberAnimation{duration:140}}
                             // Declared first so every button below sits above it.
@@ -575,6 +576,7 @@ Item {
                             }
                         }
                     }
+                    } // end of the two-column Wi-Fi Flow
                     Row{spacing:10;visible:root.wifiRows.length>8
                         Action{text:'← Previous';opacity:root.wifiPage>0?1:0.4;onClicked:root.wifiPage=Math.max(0,root.wifiPage-1)}
                         Label{text:(root.wifiPage+1)+' / '+Math.max(1,Math.ceil(root.wifiRows.length/8));anchors.verticalCenter:parent.verticalCenter}
@@ -591,6 +593,7 @@ Item {
                     Rectangle{visible:!(root.net.interfaces||[]).some(function(i){return i.kind==='ethernet'});width:parent.width;height:visible?44:0;radius:10;color:root.surface;border.color:root.hairline
                         Label{anchors.centerIn:parent;text:'No wired Ethernet adapter is present. A USB or dock adapter appears here the moment the kernel sees it.';font.pixelSize:11}
                     }
+                    Flow{width:parent.width;spacing:12 // interfaces: two columns of cards
                     Repeater{
                         model:root.net.interfaces||[]
                         Rectangle{
@@ -604,7 +607,7 @@ Item {
                             readonly property string actionUuid:managed?modelData.nm.uuid:(profiles.length?profiles[0].uuid:'')
                             readonly property string actionName:managed?modelData.nm.connection:(profiles.length?profiles[0].name:'')
                             readonly property bool connected:modelData.nm&&String(modelData.nm.state||'').indexOf('connected')===0
-                            width:mainColumn.width;height:col.implicitHeight+28;radius:14;color:modelData.active?root.surfaceRaised:root.surface;border.color:modelData.active?Qt.alpha(root.themeAccent,0.5):root.hairline
+                            width:(mainColumn.width-24)/3;height:col.implicitHeight+28;radius:14;color:modelData.active?root.surfaceRaised:root.surface;border.color:modelData.active?Qt.alpha(root.themeAccent,0.5):root.hairline
                             Column{id:col;anchors.fill:parent;anchors.margins:14;spacing:10
                                 Row{width:parent.width
                                     Column{width:parent.width-250;spacing:3
@@ -613,31 +616,32 @@ Item {
                                     }
                                     Label{text:'↓ '+Model.rate(card.modelData.rates.rx)+'   ↑ '+Model.rate(card.modelData.rates.tx);width:250;horizontalAlignment:Text.AlignRight;color:root.panelText}
                                 }
-                                Grid{width:parent.width;columns:4;spacing:8
-                                    Stat{width:(parent.width-24)/4;height:66;label:'IPv4';value:((card.modelData.addrs4||[])[0]||'—')
+                                Grid{id:ifaceGrid;width:parent.width;columns:2;spacing:8
+                                    Stat{width:(parent.width-8)/2;height:66;label:'IPv4';value:((card.modelData.addrs4||[])[0]||'—')
                                         hint:(card.modelData.addrs6||[]).length?(card.modelData.addrs6.length+' IPv6 · '+Model.bare(card.modelData.addrs6[0])):'no global IPv6'
                                         copyText:Model.bare((card.modelData.addrs4||[])[0]);copyWhat:card.modelData.name+' IPv4'}
-                                    Stat{width:(parent.width-24)/4;height:66;label:card.modelData.kind==='ethernet'?'LINK':'MTU · LINK';value:card.modelData.kind==='ethernet'?Model.mbit(card.modelData.speed):'MTU '+card.modelData.mtu;hint:card.modelData.kind==='ethernet'?(card.modelData.duplex?card.modelData.duplex+' duplex · ':'')+'MTU '+card.modelData.mtu:card.modelData.kind==='wifi'&&card.modelData.active?'↑ '+Model.mbit(root.wifi.txBitrate)+' radio':(card.modelData.nm&&card.modelData.nm.type)||card.modelData.kind}
-                                    Stat{width:(parent.width-24)/4;height:66;label:(card.modelData.addrs6||[]).length?'IPv6':'TOTALS'
+                                    Stat{width:(parent.width-8)/2;height:66;label:card.modelData.kind==='ethernet'?'LINK':'MTU · LINK';value:card.modelData.kind==='ethernet'?Model.mbit(card.modelData.speed):'MTU '+card.modelData.mtu;hint:card.modelData.kind==='ethernet'?(card.modelData.duplex?card.modelData.duplex+' duplex · ':'')+'MTU '+card.modelData.mtu:card.modelData.kind==='wifi'&&card.modelData.active?'↑ '+Model.mbit(root.wifi.txBitrate)+' radio':(card.modelData.nm&&card.modelData.nm.type)||card.modelData.kind}
+                                    Stat{width:(parent.width-8)/2;height:66;label:(card.modelData.addrs6||[]).length?'IPv6':'TOTALS'
                                         value:(card.modelData.addrs6||[]).length?Model.bare(card.modelData.addrs6[0]):'↓ '+Model.size(card.modelData.stats.rx)
                                         hint:(card.modelData.addrs6||[]).length?'↓ '+Model.size(card.modelData.stats.rx)+' ↑ '+Model.size(card.modelData.stats.tx):'↑ '+Model.size(card.modelData.stats.tx)+' · '+Model.count(card.modelData.stats.rxPackets+card.modelData.stats.txPackets)+' packets'
                                         copyText:(card.modelData.addrs6||[]).length?Model.bare(card.modelData.addrs6[0]):'';copyWhat:card.modelData.name+' IPv6'
                                         elideMode:(card.modelData.addrs6||[]).length?Text.ElideMiddle:Text.ElideRight}
-                                    Stat{width:(parent.width-24)/4;height:66;label:'ERRORS · DROPS';value:Model.count(card.modelData.stats.rxErrors+card.modelData.stats.txErrors)+'  ·  '+Model.count(card.modelData.stats.rxDropped+card.modelData.stats.txDropped);hint:'rx '+card.modelData.stats.rxErrors+'/'+card.modelData.stats.rxDropped+' · tx '+card.modelData.stats.txErrors+'/'+card.modelData.stats.txDropped}
+                                    Stat{width:(parent.width-8)/2;height:66;label:'ERRORS · DROPS';value:Model.count(card.modelData.stats.rxErrors+card.modelData.stats.txErrors)+'  ·  '+Model.count(card.modelData.stats.rxDropped+card.modelData.stats.txDropped);hint:'rx '+card.modelData.stats.rxErrors+'/'+card.modelData.stats.rxDropped+' · tx '+card.modelData.stats.txErrors+'/'+card.modelData.stats.txDropped}
                                 }
                                 Label{visible:card.managed;width:parent.width;elide:Text.ElideRight;font.pixelSize:10;color:root.bodyText
                                     text:'IPv4 '+(card.s.method4||'—')+(card.s.addresses4?' '+card.s.addresses4:'')+(card.s.gateway4?' via '+card.s.gateway4:'')+'  ·  IPv6 '+(card.s.method6||'—')+'  ·  DNS '+(card.s.dns4?card.s.dns4+(card.s.ignoreAutoDns?' (DHCP DNS ignored)':''):'from DHCP')+'  ·  autoconnect '+(card.s.autoconnect?'on':'off')+(card.s.metered&&card.s.metered!=='unknown'?'  ·  metered '+card.s.metered:'')+(card.s.wakeOnLan&&card.s.wakeOnLan!=='default'?'  ·  wake-on-LAN '+card.s.wakeOnLan:'')}
-                                Row{spacing:8
+                                Flow{width:parent.width;spacing:8
                                     Action{visible:card.actionUuid!==''&&!card.external;text:card.connected?'Disconnect':'Connect'+(card.managed?'':' “'+card.actionName+'”');implicitHeight:28;enabled:!actionProc.running&&(card.modelData.kind!=='wifi'||!card.connected);onClicked:root.runAction('connection',[card.connected?'down':'up',card.actionUuid],(card.connected?'Deactivating ':'Activating ')+card.actionName+'…')}
                                     Action{visible:card.actionUuid!=='';text:'Autoconnect '+(card.s.autoconnect?'on':'off');selected:!!card.s.autoconnect;implicitHeight:28;enabled:!actionProc.running&&card.managed;onClicked:root.runAction('autoconnect',[card.actionUuid,card.s.autoconnect?'no':'yes'],'Updating autoconnect…')}
                                     Action{visible:card.actionUuid!=='';text:'Edit connection…';implicitHeight:28;onClicked:root.editConnection(card.actionUuid)}
-                                    Label{visible:card.actionUuid==='';text:card.external?'Managed outside NetworkManager ('+card.modelData.nm.state+')':card.profiles.length===0&&card.modelData.kind!=='virtual'?'No saved profile for this device':'Not managed by NetworkManager';font.pixelSize:10;anchors.verticalCenter:parent.verticalCenter}
-                                    Label{visible:!card.managed&&card.actionUuid!=='';text:'saved profile · not active';font.pixelSize:10;anchors.verticalCenter:parent.verticalCenter}
-                                    Label{visible:card.managed&&card.modelData.kind==='wifi'&&card.connected;text:'Wi-Fi disconnects live on the Wi-Fi tab';font.pixelSize:10;anchors.verticalCenter:parent.verticalCenter}
+                                    Label{visible:card.actionUuid==='';text:card.external?'Managed outside NetworkManager ('+card.modelData.nm.state+')':card.profiles.length===0&&card.modelData.kind!=='virtual'?'No saved profile for this device':'Not managed by NetworkManager';font.pixelSize:10;height:28;verticalAlignment:Text.AlignVCenter}
+                                    Label{visible:!card.managed&&card.actionUuid!=='';text:'saved profile · not active';font.pixelSize:10;height:28;verticalAlignment:Text.AlignVCenter}
+                                    Label{visible:card.managed&&card.modelData.kind==='wifi'&&card.connected;text:'Wi-Fi disconnects live on the Wi-Fi tab';font.pixelSize:10;height:28;verticalAlignment:Text.AlignVCenter}
                                 }
                             }
                         }
                     }
+                    } // end of the two-column interfaces Flow
                     Label{width:parent.width;wrapMode:Text.WordWrap;text:'Click any address to copy it. Edit connection… opens nmtui for the full IPv4/IPv6, DNS, MTU and wake-on-LAN settings in a floating terminal. Connect and disconnect act on the saved NetworkManager profile as your user; nothing here changes system files.';font.pixelSize:10}
                 }
                 Column {

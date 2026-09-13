@@ -3,6 +3,19 @@
 The version lives in `manifest.json`. Every release bumps it, adds an entry
 here, and is tagged `vX.Y.Z`: a fix bumps the patch, a new capability the minor.
 
+## 1.1.1 — 2026-09-13
+
+### Fixed
+- **Pages no longer run past the bottom of the screen.** Measured on a
+  1600×1000 display, six pages needed up to 1,697 px of a 960 px budget. The
+  panel is now 1,240 px wide and uses that width instead of height: Settings is
+  a 2×2 grid, the Wi-Fi list and the interface cards sit in columns, the
+  thread grid and Storage-lab tiles spread to fill the card, and the hogs tables
+  and Disk Overview are tighter. Every fixed page now fits. Nothing was removed.
+  Only an open-ended list, such as a machine with many interfaces, may scroll.
+- `status` reports `contentNeeded`, `availableHeight` and `availableWidth`, so a
+  page that outgrows the screen can be caught by measurement rather than by eye.
+
 ## 1.1.0 — 2026-09-12
 
 ### Added
@@ -46,7 +59,6 @@ here, and is tagged `vX.Y.Z`: a fix bumps the patch, a new capability the minor.
   loop flickered the panel width, the bar collapsed on vertical bars, and the
   About links could block the shell. All fixed, along with a dozen smaller
   defects from two independent reviews.
-- No page scrolls: every page fits on one screen.
 
 ## 1.0.0 — 2026-09-11
 

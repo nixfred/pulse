@@ -18,6 +18,9 @@ Item {
     // original code already used, so the ported body needs no rewriting.
     required property var host
     readonly property string prefix: 'disk'
+    // Storage-lab tiles spread to the width they are given, so a wide panel
+    // shows the same tiles in fewer rows instead of pushing past the screen.
+    readonly property int labColumns: Math.max(4, Math.floor((root.width + 10) / 200))
     readonly property string moduleName: host.moduleName
     readonly property var bar: host.bar
     readonly property color barForeground: host.barForeground
@@ -358,7 +361,7 @@ Item {
             }
         }
                 Column {
-                    width:parent.width;spacing:14;visible:root.tab===0
+                    width:parent.width;spacing:10;visible:root.tab===0 // tight: fits a 1000 px screen
                     height:visible?implicitHeight:0
                     Rectangle {
                         width:parent.width;height:170;radius:16;border.color:Qt.alpha(root.tint,0.45)
@@ -376,12 +379,12 @@ Item {
                         Text {anchors.right:parent.right;anchors.rightMargin:20;anchors.top:parent.top;anchors.topMargin:22;text:(root.capacityKnown?Model.pct(root.primary.usedPct):'—')+'\nused';color:Qt.alpha(root.themeText,0.5);font.pixelSize:15;horizontalAlignment:Text.AlignRight;font.family:root.themeFont}
                     }
                     Row {width:parent.width;spacing:10
-                        Stat{width:(parent.width-30)/4;height:96;label:'READING';value:Model.rate(root.rates.read);hint:Model.perSec(root.rates.readIops)+' · all drives'}
-                        Stat{width:(parent.width-30)/4;height:96;label:'WRITING';value:Model.rate(root.rates.write);hint:Model.perSec(root.rates.writeIops)+' · all drives'}
-                        Stat{width:(parent.width-30)/4;height:96;label:'DRIVE BUSY';value:Model.whole(root.drive&&root.drive.rates?root.drive.rates.util:null);hint:root.drive?'time '+root.drive.name+' spent on I/O':'no drive found'}
-                        Stat{width:(parent.width-30)/4;height:96;label:'STORAGE PRESSURE';value:Model.pct(root.pressure);hint:'Time tasks waited on I/O · last 10s'}
+                        Stat{width:(parent.width-30)/4;height:90;label:'READING';value:Model.rate(root.rates.read);hint:Model.perSec(root.rates.readIops)+' · all drives'}
+                        Stat{width:(parent.width-30)/4;height:90;label:'WRITING';value:Model.rate(root.rates.write);hint:Model.perSec(root.rates.writeIops)+' · all drives'}
+                        Stat{width:(parent.width-30)/4;height:90;label:'DRIVE BUSY';value:Model.whole(root.drive&&root.drive.rates?root.drive.rates.util:null);hint:root.drive?'time '+root.drive.name+' spent on I/O':'no drive found'}
+                        Stat{width:(parent.width-30)/4;height:90;label:'STORAGE PRESSURE';value:Model.pct(root.pressure);hint:'Time tasks waited on I/O · last 10s'}
                     }
-                    Rectangle {width:parent.width;height:242;radius:14;color:root.surface;border.color:root.stroke
+                    Rectangle {width:parent.width;height:214;radius:14;color:root.surface;border.color:root.stroke
                         Column {anchors.fill:parent;anchors.margins:14;spacing:9
                             Row {width:parent.width;spacing:7
                                 Heading{text:'CONTINUOUS HISTORY';font.pixelSize:12;width:parent.width-222;anchors.verticalCenter:parent.verticalCenter}
@@ -389,7 +392,7 @@ Item {
                                     Action{required property var modelData;text:modelData.t;selected:root.range===modelData.s;implicitWidth:68;implicitHeight:28;onClicked:root.range=modelData.s}
                                 }
                             }
-                            DiskHistoryGraph{width:parent.width;height:139;historyData:root.chart;tint:root.tint
+                            DiskHistoryGraph{width:parent.width;height:111;historyData:root.chart;tint:root.tint
                                 writeTint:root.themeAccent;busyTint:root.rampWarn;usedTint:root.themeText
                                 grid:root.stroke;axisText:root.themeMuted
                                 crosshair:root.strokeStrong;hoverBackground:root.surfaceHover
@@ -440,7 +443,7 @@ Item {
                     }
                 }
                 Column {
-                    width:parent.width;spacing:10;visible:root.tab===1;height:visible?implicitHeight:0
+                    width:parent.width;spacing:6;visible:root.tab===1;height:visible?implicitHeight:0 // tight: fits a 1000 px screen
                     Row{width:parent.width;spacing:8
                         Heading{text:'TOP DISK HOGS';width:parent.width-90;font.pixelSize:13;anchors.verticalCenter:parent.verticalCenter}
                         Label{text:'refresh 9s';font.pixelSize:10;anchors.verticalCenter:parent.verticalCenter}
@@ -487,23 +490,23 @@ Item {
                         Heading{text:root.drive?(root.drive.model||root.drive.name).toUpperCase():'';font.pixelSize:13;width:parent.width*0.5;elide:Text.ElideRight}
                         Label{text:root.drive?root.drive.name+'  ·  '+root.drive.transport+' '+(root.drive.rotational?'HDD':'SSD')+'  ·  '+Model.dec(root.drive.size)+(root.drive.firmware?'  ·  fw '+root.drive.firmware:''):'';width:parent.width*0.5;horizontalAlignment:Text.AlignRight;font.pixelSize:11;elide:Text.ElideLeft}
                     }
-                    Grid{width:parent.width;columns:4;spacing:10;visible:root.drive!==null
+                    Grid{width:parent.width;columns:root.labColumns;spacing:10;visible:root.drive!==null
                         Repeater{model:root.drive?root.driveStats(root.drive):[]
-                            Stat{required property var modelData;width:(mainColumn.width-30)/4;height:80;valueSize:17;label:modelData.l;value:modelData.v;hint:modelData.h}
+                            Stat{required property var modelData;width:(mainColumn.width-10*(root.labColumns-1))/root.labColumns;height:80;valueSize:17;label:modelData.l;value:modelData.v;hint:modelData.h}
                         }
                     }
                     Label{visible:root.drive!==null;width:parent.width;elide:Text.ElideRight;font.pixelSize:10;text:root.drive?(root.drive.partitions||[]).length+' partitions  ·  '+(root.drive.discard?'discard supported':'no discard')+'  ·  write cache '+(root.drive.writeCache||'unknown')+'  ·  '+root.drive.logicalBlock+'-byte blocks'+(root.drive.smart&&root.drive.smart.updated?'  ·  SMART read '+Qt.formatTime(new Date(root.drive.smart.updated*1000),'h:mm AP'):'')+(root.disks.length>1?'  ·  also '+root.disks.filter(function(d){return d.name!==root.drive.name}).map(function(d){return d.name+' '+Model.dec(d.size)}).join(', ')+' — follow a filesystem on Overview to inspect':''):''}
                     Label{visible:root.drive===null;width:parent.width;wrapMode:Text.WordWrap;text:'No physical drive is visible from this session: a container, a diskless boot, or a virtual disk the kernel does not expose as a device.';font.pixelSize:11}
                     Rectangle{width:parent.width;height:1;color:root.stroke}
                     Heading{text:root.pool?'BTRFS POOL BEHIND '+(root.primary?root.primary.mount.toUpperCase():'/'):'KERNEL WRITEBACK AND TRIM';font.pixelSize:13}
-                    Grid{width:parent.width;columns:4;spacing:10;visible:root.pool!==null
+                    Grid{width:parent.width;columns:root.labColumns;spacing:10;visible:root.pool!==null
                         Repeater{model:root.pool?root.poolStats(root.pool):[]
-                            Stat{required property var modelData;width:(mainColumn.width-30)/4;height:80;valueSize:17;label:modelData.l;value:modelData.v;hint:modelData.h}
+                            Stat{required property var modelData;width:(mainColumn.width-10*(root.labColumns-1))/root.labColumns;height:80;valueSize:17;label:modelData.l;value:modelData.v;hint:modelData.h}
                         }
                     }
-                    Grid{width:parent.width;columns:4;spacing:10
+                    Grid{width:parent.width;columns:root.labColumns;spacing:10
                         Repeater{model:root.kernelStats()
-                            Stat{required property var modelData;width:(mainColumn.width-30)/4;height:80;valueSize:17;label:modelData.l;value:modelData.v;hint:modelData.h}
+                            Stat{required property var modelData;width:(mainColumn.width-10*(root.labColumns-1))/root.labColumns;height:80;valueSize:17;label:modelData.l;value:modelData.v;hint:modelData.h}
                         }
                     }
                     Rectangle{width:parent.width;height:84;radius:12;color:Qt.tint(root.themeBg,Qt.alpha(root.rampGood,0.08));border.color:Qt.alpha(root.rampGood,0.42)

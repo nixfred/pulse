@@ -325,7 +325,7 @@ Item {
                     }
                 }
                 Column {
-                    width:parent.width;spacing:10;visible:root.tab===1;height:visible?implicitHeight:0
+                    width:parent.width;spacing:6;visible:root.tab===1;height:visible?implicitHeight:0 // tight: fits a 1000 px screen
                     Row{width:parent.width;spacing:8
                         Heading{text:'TOP RAM HOARDERS';width:parent.width-300;font.pixelSize:13;anchors.verticalCenter:parent.verticalCenter}
                         Action{text:'By app';selected:root.grouped;implicitWidth:76;implicitHeight:28;onClicked:root.setGrouped(true)}

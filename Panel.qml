@@ -165,6 +165,9 @@ Panel {
             // Content geometry, so a caller can crop a screenshot to the panel
             // without guessing where it ends.
             panelWidth: panel.contentWidth, panelHeight: panel.contentHeight,
+            // What the page actually needs versus the room the screen gives it. A
+            // page scrolls exactly when contentNeeded exceeds availableHeight.
+            contentNeeded: Math.round(shell.implicitHeight), availableHeight: Math.round(panel.availableCardHeight), availableWidth: Math.round(panel.availableCardWidth),
             panelX: Math.round(panel.cardOrigin.x), panelY: Math.round(panel.cardOrigin.y),
             // What the entry reserves on the bar, and what it actually draws.
             // The first must never be smaller than the second, or the widget
@@ -179,6 +182,11 @@ Panel {
     }
 
     property string version: ''
+    // 1240 logical px: wide enough for the paged tables, the Wi-Fi list, the
+    // thread grid and the storage-lab tiles to use two columns or more, which
+    // is what keeps every fixed page inside a 1000 px-tall screen. The shell
+    // still caps it to the screen's width.
+    property int preferredWidth: 1240
     FileView {
         id: manifestFile
         path: String(Qt.resolvedUrl('manifest.json')).replace(/^file:\/\//, '')
@@ -200,6 +208,7 @@ Panel {
         // Jump straight to one domain's dashboard — the replacement for the
         // four plugins' separate `open` calls.
         function show(page: string): void { root.openSection(String(page || 'overview')) }
+        function panelWidth(value: int): void { root.preferredWidth = Math.max(640, value) }
         function showTab(page: string, value: int): void {
             root.openSection(String(page || 'overview'))
             var s = root.sectionFor(String(page || ''))
@@ -362,7 +371,7 @@ Panel {
         // fits them to the screen itself (bar and margins already subtracted),
         // and pre-clamping here is what makes a panel scroll while the screen
         // still has room.
-        contentWidth: panel.fittedContentWidth(980)
+        contentWidth: panel.fittedContentWidth(root.preferredWidth)
         contentHeight: panel.fittedContentHeight(shell.implicitHeight)
         Item {
             id: body

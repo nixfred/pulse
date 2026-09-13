@@ -537,14 +537,65 @@ CHIP_GLOW_NEW = ("            // Glow as a few widening, fading strokes, not sha
                  "            c.strokeRect(x,y,body,body)")
 for chip in ('CpuChip.qml', 'DiskChip.qml', 'NetChip.qml', 'MemoryChip.qml'):
     MODEL_PATCHES[chip] = [(CHIP_GLOW_OLD, CHIP_GLOW_NEW)]
+
+# ---- no fixed page may scroll ---------------------------------------------
+# On a 1000 px-tall screen the stacked originals ran past the bottom. The panel
+# is 1240 px wide; these patches let the paged and gridded content use that
+# width instead of height. Nothing is removed. Open-ended lists may still
+# scroll, which is fine; a page of fixed layout may not.
+LAYOUT_PATCHES = {
+    'NetSection.qml': [
+        # Wi-Fi: the eight networks on a page sit in two columns of four.
+        ("                    Repeater {\n                        model:root.wifiRows.slice(root.wifiPage*8,root.wifiPage*8+8)",
+         "                    Flow{width:parent.width;spacing:12\n                    Repeater {\n                        model:root.wifiRows.slice(root.wifiPage*8,root.wifiPage*8+8)"),
+        ("width:mainColumn.width;height:prompting?92:58", "width:(mainColumn.width-12)/2;height:prompting?92:58"),
+        ("                    Row{spacing:10;visible:root.wifiRows.length>8",
+         "                    } // end of the two-column Wi-Fi Flow\n                    Row{spacing:10;visible:root.wifiRows.length>8"),
+    ],
+    'CpuSection.qml': [
+        # Every thread: as many columns as the card has room for (24 threads fit
+        # in two rows at 1240 px instead of four at six columns).
+        ("Grid{width:parent.width;columns:Math.max(1,Math.min(6,root.cores.length));",
+         "Grid{id:threadGrid;width:parent.width;columns:Math.max(1,Math.min(Math.max(6,Math.floor((coreColumn.width+8)/96)),root.cores.length));"),
+        ("width:(coreColumn.width-8*5)/6;spacing:4",
+         "width:(coreColumn.width-8*(threadGrid.columns-1))/threadGrid.columns;spacing:4"),
+    ],
+    'DiskSection.qml': [
+        # Storage lab: the stat tiles spread to the width they are given.
+        ("    readonly property string prefix: 'disk'\n",
+         "    readonly property string prefix: 'disk'\n"
+         "    // Storage-lab tiles spread to the width they are given, so a wide panel\n"
+         "    // shows the same tiles in fewer rows instead of pushing past the screen.\n"
+         "    readonly property int labColumns: Math.max(4, Math.floor((root.width + 10) / 200))\n"),
+        ("Grid{width:parent.width;columns:4;spacing:10;visible:root.drive!==null",
+         "Grid{width:parent.width;columns:root.labColumns;spacing:10;visible:root.drive!==null"),
+        ("Grid{width:parent.width;columns:4;spacing:10;visible:root.pool!==null",
+         "Grid{width:parent.width;columns:root.labColumns;spacing:10;visible:root.pool!==null"),
+        ("Grid{width:parent.width;columns:4;spacing:10\n",
+         "Grid{width:parent.width;columns:root.labColumns;spacing:10\n"),
+        ("width:(mainColumn.width-30)/4;height:80;valueSize:17",
+         "width:(mainColumn.width-10*(root.labColumns-1))/root.labColumns;height:80;valueSize:17", 'all'),
+    ],
+}
+LAYOUT_PATCHES_2 = {'NetSection.qml': [('                    Repeater{\n                        model:root.net.interfaces||[]', '                    Flow{width:parent.width;spacing:12 // interfaces: two columns of cards\n                    Repeater{\n                        model:root.net.interfaces||[]'), ('width:mainColumn.width;height:col.implicitHeight+28;radius:14;color:modelData.active', 'width:(mainColumn.width-12)/2;height:col.implicitHeight+28;radius:14;color:modelData.active'), ("                                Grid{width:parent.width;columns:4;spacing:8\n                                    Stat{width:(parent.width-24)/4;height:66;label:'IPv4'", "                                Grid{id:ifaceGrid;width:parent.width;columns:2;spacing:8\n                                    Stat{width:(parent.width-24)/4;height:66;label:'IPv4'"), ('Stat{width:(parent.width-24)/4;height:66;', 'Stat{width:(parent.width-8)/2;height:66;', 'all'), ("                                Row{spacing:8\n                                    Action{visible:card.actionUuid!==''&&!card.external", "                                Flow{width:parent.width;spacing:8\n                                    Action{visible:card.actionUuid!==''&&!card.external")], 'RamSection.qml': [('width:parent.width;spacing:10;visible:root.tab===1;height:visible?implicitHeight:0', 'width:parent.width;spacing:6;visible:root.tab===1;height:visible?implicitHeight:0 // tight: fits a 1000 px screen')], 'DiskSection.qml': [('width:parent.width;spacing:10;visible:root.tab===1;height:visible?implicitHeight:0', 'width:parent.width;spacing:6;visible:root.tab===1;height:visible?implicitHeight:0 // tight: fits a 1000 px screen'), ('width:parent.width;spacing:14;visible:root.tab===0\n', 'width:parent.width;spacing:10;visible:root.tab===0 // tight: fits a 1000 px screen\n'), ('Stat{width:(parent.width-30)/4;height:96;', 'Stat{width:(parent.width-30)/4;height:90;', 'all'), ('Rectangle {width:parent.width;height:242;radius:14;color:root.surface;border.color:root.stroke\n                        Column {anchors.fill:parent;anchors.margins:14;spacing:9', 'Rectangle {width:parent.width;height:214;radius:14;color:root.surface;border.color:root.stroke\n                        Column {anchors.fill:parent;anchors.margins:14;spacing:9'), ('DiskHistoryGraph{width:parent.width;height:139;', 'DiskHistoryGraph{width:parent.width;height:111;')]}
+for fname, edits in LAYOUT_PATCHES_2.items():
+    LAYOUT_PATCHES.setdefault(fname, []).extend(edits)
+LAYOUT_PATCHES['NetSection.qml'].append(("                    }\n                    Label{width:parent.width;wrapMode:Text.WordWrap;text:'Click any address to copy", "                    }\n                    } // end of the two-column interfaces Flow\n                    Label{width:parent.width;wrapMode:Text.WordWrap;text:'Click any address to copy"))
+# labels inside the interface action Flow cannot use anchors
+# interface action labels cannot use anchors inside a Flow; three card columns
+LAYOUT_PATCHES['NetSection.qml'].extend([("                                    Label{visible:card.actionUuid==='';text:card.external?'Managed outside NetworkManager ('+card.modelData.nm.state+')':card.profiles.length===0&&card.modelData.kind!=='virtual'?'No saved profile for this device':'Not managed by NetworkManager';font.pixelSize:10;anchors.verticalCenter:parent.verticalCenter}", "                                    Label{visible:card.actionUuid==='';text:card.external?'Managed outside NetworkManager ('+card.modelData.nm.state+')':card.profiles.length===0&&card.modelData.kind!=='virtual'?'No saved profile for this device':'Not managed by NetworkManager';font.pixelSize:10;height:28;verticalAlignment:Text.AlignVCenter}"), ("                                    Label{visible:!card.managed&&card.actionUuid!=='';text:'saved profile · not active';font.pixelSize:10;anchors.verticalCenter:parent.verticalCenter}", "                                    Label{visible:!card.managed&&card.actionUuid!=='';text:'saved profile · not active';font.pixelSize:10;height:28;verticalAlignment:Text.AlignVCenter}"), ("                                    Label{visible:card.managed&&card.modelData.kind==='wifi'&&card.connected;text:'Wi-Fi disconnects live on the Wi-Fi tab';font.pixelSize:10;anchors.verticalCenter:parent.verticalCenter}", "                                    Label{visible:card.managed&&card.modelData.kind==='wifi'&&card.connected;text:'Wi-Fi disconnects live on the Wi-Fi tab';font.pixelSize:10;height:28;verticalAlignment:Text.AlignVCenter}"), ('width:(mainColumn.width-12)/2;height:col.implicitHeight+28;radius:14', 'width:(mainColumn.width-24)/3;height:col.implicitHeight+28;radius:14', 'all')])
+for fname, edits in LAYOUT_PATCHES.items():
+    MODEL_PATCHES.setdefault(fname, []).extend(edits)
 for fname, edits in MODEL_PATCHES.items():
     f = os.path.join(DST, 'sections', fname)
     t = open(f).read()
-    for old, new in edits:
+    for edit in edits:
+        old, new = edit[0], edit[1]
+        every = len(edit) > 2 and edit[2] == 'all'
         if new in t:
             continue
         if old not in t:
             raise SystemExit('model patch no longer applies to %s:\n%s' % (fname, old))
-        t = t.replace(old, new, 1)
+        t = t.replace(old, new) if every else t.replace(old, new, 1)
     open(f, 'w').write(t)
 print('model patches applied')

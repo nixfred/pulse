@@ -274,9 +274,9 @@ Item {
                                 Heading{text:'EVERY THREAD';font.pixelSize:12;width:parent.width/2}
                                 Label{text:root.cores.filter(function(c){return c.busy>=50}).length+' of '+root.cores.length+' above half load';width:parent.width/2;horizontalAlignment:Text.AlignRight;color:Color.accent}
                             }
-                            Grid{width:parent.width;columns:Math.max(1,Math.min(6,root.cores.length));columnSpacing:8;rowSpacing:8
+                            Grid{id:threadGrid;width:parent.width;columns:Math.max(1,Math.min(Math.max(6,Math.floor((coreColumn.width+8)/96)),root.cores.length));columnSpacing:8;rowSpacing:8
                                 Repeater{model:root.cores
-                                    Column{required property var modelData;width:(coreColumn.width-8*5)/6;spacing:4
+                                    Column{required property var modelData;width:(coreColumn.width-8*(threadGrid.columns-1))/threadGrid.columns;spacing:4
                                         Row{width:parent.width
                                             Label{text:'T'+modelData.id;font.pixelSize:10;color:Color.accent;width:parent.width/2}
                                             Label{text:Model.pct(modelData.busy);font.pixelSize:10;width:parent.width/2;horizontalAlignment:Text.AlignRight;color:root.ink}

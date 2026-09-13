@@ -159,6 +159,11 @@ Item {
             }
         }
 
+        // Two columns of domains. Stacked, the four blocks ran past the bottom of
+        // a 1000 px screen; side by side they fit with room to spare.
+        Flow {
+            width: column.width
+            spacing: 10
         Repeater {
             model: host.domains
             Rectangle {
@@ -166,7 +171,7 @@ Item {
                 required property var modelData
                 required property int index
                 readonly property string key: host.domainKeys[index]
-                width: column.width
+                width: (column.width - 10) / 2
                 height: inner.implicitHeight + 24   // 12px margins, both sides
                 radius: 14
                 color: root.card
@@ -234,7 +239,7 @@ Item {
                             model: block.modelData.modeCount
                             Action {
                                 required property int index
-                                implicitWidth: (inner.width - 10) / 3
+                                implicitWidth: (inner.width - 5) / 2
                                 height: 30
                                 accent: block.modelData.tint
                                 selected: block.modelData.mode === index
@@ -245,6 +250,8 @@ Item {
                     }
                 }
             }
+        }
+
         }
 
         Label {
