@@ -133,6 +133,16 @@ four no longer compete for the same keys.
 
 ## Install
 
+`omarchy plugin add` clones the widget. It does not start the collectors.
+Without the installer every domain reads "recorder offline".
+
+```bash
+omarchy plugin add https://github.com/nixfred/pulse.git
+python3 ~/.config/omarchy/plugins/nixfred.pulse/install.py
+```
+
+Or from a clone of this repo:
+
 ```bash
 git clone https://github.com/nixfred/pulse.git
 cd pulse

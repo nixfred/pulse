@@ -32,7 +32,8 @@ Item {
     function close() { host.close() }
     function open() { host.openSection(root.prefix) }
     width: parent ? parent.width : 0
-    implicitHeight: mainColumn.implicitHeight
+    property Item dashboard: null
+    implicitHeight: dashboard ? dashboard.implicitHeight : 0
 
     readonly property string stateDir: (Quickshell.env('XDG_STATE_HOME') || Quickshell.env('HOME')+'/.local/state')+'/net-pulse'
     readonly property string helper: String(Qt.resolvedUrl('../collectors/net_pulse.py')).replace(/^file:\/\//,'')
@@ -416,10 +417,20 @@ Item {
             onClicked:function(event){if(event.button===Qt.RightButton)root.copy(link.url,'the link to');else root.openUrl(link.url)}}
     }
 
-    Column {
-        id: mainColumn
-        width: root.width
-        spacing: 14
+    // The dashboard is the original plugin's whole panel. Building all four
+    // of those on every click is what made the merged popup take seconds to
+    // appear; tearing them down on close made it take seconds to go. The bar
+    // only needs the readings above. This tree is created the first time you
+    // open this domain, kept while you stay on it (including through the
+    // panel's close fade), and dropped when you leave.
+    Repeater {
+        model: (host.active === root.prefix && (host.opened || root.dashboard)) ? 1 : 0
+        onItemAdded: function (index, item) { root.dashboard = item }
+        onItemRemoved: function (index, item) { if (root.dashboard === item) root.dashboard = null }
+        Column {
+            id: mainColumn
+            width: root.width
+            spacing: 14
         Row {
             spacing: 8
             Repeater {
@@ -829,5 +840,6 @@ Item {
                 }
                 Rectangle{width:parent.width;height:1;color:root.hairline}
                 Label{width:parent.width;wrapMode:Text.WordWrap;font.pixelSize:10;color:root.stale?root.themeUrgent:root.bodyText;text:root.actionStatus || (root.stale?'Telemetry is offline. Check the net-pulse user service.': 'LIVE · updated '+Qt.formatTime(new Date(root.net.ts*1000),'h:mm:ss AP')+'  ·  History stays on this machine  ·  Esc closes')}
+        }
     }
 }
