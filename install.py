@@ -33,6 +33,10 @@ PAYLOAD = ('manifest.json', 'Panel.qml', 'Model.js', 'README.md', 'sections', 'c
 # layout file directly. The scan is a subprocess and IPC answers before it
 # returns, so the first put after a rescan can honestly say "not ready".
 PLACEMENT_TRIES = 6
+# How many times to ask the shell to rescan before treating the answer as a
+# warning. The publish a moment earlier made the shell rescan on its own, so
+# the first attempt can land while it is still busy with that one.
+RESCAN_TRIES = 5
 # The four widgets this replaces. Leaving them enabled would put five bar
 # entries up showing the same four readings.
 SUPERSEDED = ('nixfred.cpu-pulse', 'nixfred.ram-pulse', 'nixfred.disk-pulse', 'nixfred.net-pulse')
@@ -191,6 +195,35 @@ def adopt_working_tree(retired, dest):
     return kept
 
 
+def ask_shell_to_rescan():
+    """Ask the running shell to rescan, and do not fail the install on a miss.
+
+    The publish a moment ago replaced the plugin directory under a running
+    shell, and the shell rescans by itself when that happens. An explicit
+    rescan issued in the same second can catch it still busy and answer
+    `omarchy-shell is not responding` - which used to raise out of main() and
+    roll the whole install back *after* the units had been installed, enabled
+    and started. The user was told the install did not complete on a machine
+    where every part of it had.
+
+    `shell.rescanPlugins` measures 0.6 s on an idle shell, so the collision,
+    not the work, is what makes it miss. Retry it, and treat a final miss as a
+    warning: the swap has happened, and the shell picks the new tree up either
+    way.
+    """
+    for attempt in range(RESCAN_TRIES):
+        try:
+            result = subprocess.run(['omarchy-shell', 'shell', 'rescanPlugins'],
+                                    capture_output=True, text=True, timeout=30, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if result.returncode == 0:
+            return True
+        if attempt + 1 < RESCAN_TRIES:
+            time.sleep(0.5 * (attempt + 1))
+    return False
+
+
 def main():
     source = Path(__file__).resolve().parent
     home = Path.home()
@@ -315,7 +348,9 @@ def main():
         for unit in UNITS:
             subprocess.run(['systemctl', '--user', 'enable', unit], check=True, timeout=30)
             subprocess.run(['systemctl', '--user', 'restart', unit], check=True, timeout=30)
-        subprocess.run(['omarchy-shell', 'shell', 'rescanPlugins'], check=True, timeout=30)
+        if not ask_shell_to_rescan():
+            print('The shell did not answer a rescan; it rescans the published tree '
+                  'on its own, so this is a notice rather than a failure.')
         retire_superseded()
         # The bar layout goes through the shell whenever the shell is there to
         # take it. Without a shell (a headless install, a first boot) the file
