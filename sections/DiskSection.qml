@@ -24,6 +24,20 @@ Item {
     readonly property string moduleName: host.moduleName
     readonly property var bar: host.bar
     readonly property color barForeground: host.barForeground
+    // ---- transparent bar -------------------------------------------------
+    // The storage die drops its fill while the bar is transparent - a square of
+    // the bar surface colour would hang over the wallpaper - and an unreadable
+    // reading (stale, or no capacity known) dims the bar's own ink instead of
+    // `muted`, which is a colour chosen to sit on a slab.
+    readonly property bool barTransparent: root.bar ? root.bar.transparent === true : false
+    readonly property color barInk: root.bar ? root.bar.barForeground : Color.foreground
+    readonly property color barTint: ((root.stale || !root.capacityKnown) && root.barTransparent) ? Util.alpha(root.barInk, 0.55) : root.tint
+    // The caption beneath the chip is 7px text, not a stroke: at the chip's
+    // dimmed alpha its thin glyphs measure barely above the wallpaper, so it
+    // takes the bar's ink whole while the bar is transparent - the same rule
+    // the headline directly above it already follows. The chip still dims, and
+    // the word OFFLINE is what carries the state.
+    readonly property color barCaptionInk: (root.barTransparent && (root.stale || !root.capacityKnown)) ? root.barInk : root.tint
     readonly property bool cardLive: host.opened && host.active === 'overview' && !root.stale && root.setting('animated', true)
     readonly property bool opened: host.opened && host.active === root.prefix
     readonly property var tabs: ['Overview','Disk hogs','Storage lab','About']
@@ -297,7 +311,7 @@ Item {
     }
     readonly property string headline: root.stale ? '—' : Model.readout(root.disk, root.mode, root.mountpoint)
     readonly property string tag: Model.modeTag(root.disk, root.mode)
-    property Component barChip: Component { DiskChip {compact:true;body:root.themeBg;glint:root.barForeground;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.tint;animate:!root.stale && root.setting('animated',true)} }
+    property Component barChip: Component { DiskChip {compact:true;body:root.barTransparent?'transparent':root.themeBg;glint:root.barForeground;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.barTint;animate:!root.stale && root.setting('animated',true)} }
     property Component cardChip: Component { DiskChip {width:88;height:88;body:Color.popups.background;glint:root.themeText;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.tint;animate:root.cardLive} }
     property Component cardGraph: Component { DiskHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;writeTint:root.themeAccent;busyTint:root.rampWarn;usedTint:root.themeText;grid:root.stroke;axisText:root.themeMuted;crosshair:root.strokeStrong;hoverBackground:root.surfaceHover;hoverBorder:root.stroke;hoverForeground:root.themeText;fontFamily:root.themeFont} }
 

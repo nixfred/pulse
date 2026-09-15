@@ -21,6 +21,23 @@ Item {
     readonly property string moduleName: host.moduleName
     readonly property var bar: host.bar
     readonly property color barForeground: host.barForeground
+    // ---- transparent bar -------------------------------------------------
+    // With the bar transparent there is no slab behind the ink, so the two
+    // colours that assume one have to go. The die keeps no fill: a square of
+    // the bar's surface colour hangs over the wallpaper in a colour picked for
+    // a solid bar. And an inactive reading dims the bar's own ink instead of
+    // using `muted`, which was chosen to sit on a slab and turns to mud over a
+    // wallpaper while the live state still looks right. The outline and the lit
+    // cells carry the chip on their own.
+    readonly property bool barTransparent: root.bar ? root.bar.transparent === true : false
+    readonly property color barInk: root.bar ? root.bar.barForeground : Color.foreground
+    readonly property color barTint: (root.stale && root.barTransparent) ? Util.alpha(root.barInk, 0.55) : root.tint
+    // The caption beneath the chip is 7px text, not a stroke: at the chip's
+    // dimmed alpha its thin glyphs measure barely above the wallpaper, so it
+    // takes the bar's ink whole while the bar is transparent - the same rule
+    // the headline directly above it already follows. The chip still dims, and
+    // the word OFFLINE is what carries the state.
+    readonly property color barCaptionInk: (root.barTransparent && root.stale) ? root.barInk : root.tint
     readonly property bool cardLive: host.opened && host.active === 'overview' && !root.stale && root.setting('animated', true)
     readonly property bool opened: host.opened && host.active === root.prefix
     readonly property var tabs: ['Overview','CPU hogs','Processor lab','About']
@@ -176,7 +193,7 @@ Item {
     }
     readonly property string headline: root.stale ? '—' : Model.readout(root.cpu, root.mode)
     readonly property string tag: Model.modeTag(root.mode)
-    property Component barChip: Component { CpuChip {compact:true;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.tint;stops:root.rampStops;dieFill:Color.background;glint:root.bar?root.bar.foreground:root.ink;animate:!root.stale && root.setting('animated',true)} }
+    property Component barChip: Component { CpuChip {compact:true;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.barTint;stops:root.rampStops;dieFill:root.barTransparent?'transparent':Color.background;glint:root.barInk;animate:!root.stale && root.setting('animated',true)} }
     property Component cardChip: Component { CpuChip {width:88;height:88;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.tint;stops:root.rampStops;dieFill:Color.popups.background;glint:root.ink;animate:root.cardLive} }
     property Component cardGraph: Component { CpuHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;heat:root.heat;ink:root.ink;surface:Color.popups.background} }
 
