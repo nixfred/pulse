@@ -161,6 +161,36 @@ def stage(source, staging):
             shutil.copy2(path, staging / name)
 
 
+def adopt_working_tree(retired, dest):
+    """Move the entries a release does not own from the old tree into the new one.
+
+    `omarchy plugin add` clones the plugin into the directory this installer
+    publishes to, and the README's own `git clone` invites the same when it is
+    run in place. Renaming the old tree aside and publishing a payload-only
+    release over it deleted everything outside PAYLOAD: `.git` first, so the
+    checkout had no history and no way back, then `docs/`, `tools/`,
+    `CHANGELOG.md` and the installer itself.
+
+    Entries the payload owns are left alone - those are the release. Anything
+    else was the user's before this ran and still is.
+    """
+    if not retired.is_dir():
+        return []
+    kept = []
+    for entry in sorted(retired.iterdir()):
+        if entry.name in PAYLOAD:
+            continue
+        target = dest / entry.name
+        if target.exists():
+            continue
+        try:
+            entry.rename(target)
+        except OSError:
+            continue
+        kept.append(entry.name)
+    return kept
+
+
 def main():
     source = Path(__file__).resolve().parent
     home = Path.home()
@@ -197,6 +227,10 @@ def main():
     # Panel.qml beside old sections.
     staging = dest.parent / ('.' + PLUGIN_ID + '.incoming')
     retired = dest.parent / ('.' + PLUGIN_ID + '.previous')
+    # Entries the release does not own, carried over from the tree it replaced.
+    # Bound here rather than where it is filled in, so the name unpublish()
+    # reads is never the one that is missing.
+    adopted = []
     shutil.rmtree(staging, ignore_errors=True)
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -206,6 +240,10 @@ def main():
         if dest.exists():
             dest.rename(retired)
         staging.rename(dest)
+        # The release does not own `.git`, `docs/`, `tools/` or the installer
+        # itself, and on a directory `omarchy plugin add` created they are the
+        # user's checkout rather than ours to delete.
+        adopted = adopt_working_tree(retired, dest)
         # `retired` is NOT deleted here. It is the only copy of the release
         # that was working a second ago, and phase two can still fail.
     except Exception:
@@ -221,6 +259,17 @@ def main():
     def unpublish():
         if not retired.exists():
             return
+        # Anything the release adopted came from the tree being restored, so it
+        # goes back before that tree is renamed over this one. A rollback that
+        # ate `.git` would be worse than the failure it is undoing.
+        for name in adopted:
+            entry = dest / name
+            if not entry.exists():
+                continue
+            try:
+                entry.rename(retired / name)
+            except OSError:
+                pass
         shutil.rmtree(dest, ignore_errors=True)
         retired.rename(dest)
         for unit in UNITS:
@@ -270,6 +319,8 @@ def main():
               'Rollback copies: ' + str(backup))
         raise
     shutil.rmtree(retired, ignore_errors=True)
+    if adopted:
+        print('Kept, not published over: ' + ', '.join(adopted))
     print('Installed Pulse. Backup: ' + str(backup))
 
 
