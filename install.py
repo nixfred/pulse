@@ -248,6 +248,16 @@ def main():
         # that was working a second ago, and phase two can still fail.
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
+        # A failure after the old tree was renamed aside leaves no plugin
+        # directory at all, and the line printed below would be false: the
+        # release that was working a second ago is sitting in `.previous` under
+        # a hidden name the shell never looks at. Put it back before saying
+        # anything, so the message is true and the bar keeps its plugin.
+        if retired.is_dir() and not dest.exists():
+            try:
+                retired.rename(dest)
+            except OSError:
+                pass
         print('Publication failed; the previous release is still in place. '
               'Rollback copies: ' + str(backup))
         raise
