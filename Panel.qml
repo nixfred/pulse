@@ -307,7 +307,7 @@ Panel {
                 Text {
                     id: barCaptionText
                     text: root.barCaption
-                    color: root.barDomain ? root.barDomain.tint : root.barForeground
+                    color: root.barDomain ? root.barDomain.barCaptionInk : root.barForeground
                     font.pixelSize: 7
                     font.letterSpacing: 0.6
                     font.bold: true
