@@ -21,6 +21,20 @@ Item {
     readonly property string moduleName: host.moduleName
     readonly property var bar: host.bar
     readonly property color barForeground: host.barForeground
+    // ---- transparent bar -------------------------------------------------
+    // No slab sits behind the ink on a transparent bar, so the chip drops its
+    // fill (a square of the bar surface colour would hang over the wallpaper)
+    // and an inactive reading dims the bar's own ink rather than using
+    // `muted`, a colour chosen to sit on a slab.
+    readonly property bool barTransparent: root.bar ? root.bar.transparent === true : false
+    readonly property color barInk: root.bar ? root.bar.barForeground : Color.foreground
+    readonly property color barTint: (root.stale && root.barTransparent) ? Util.alpha(root.barInk, 0.55) : root.tint
+    // The caption beneath the chip is 7px text, not a stroke: at the chip's
+    // dimmed alpha its thin glyphs measure barely above the wallpaper, so it
+    // takes the bar's ink whole while the bar is transparent - the same rule
+    // the headline directly above it already follows. The chip still dims, and
+    // the word OFFLINE is what carries the state.
+    readonly property color barCaptionInk: (root.barTransparent && root.stale) ? root.barInk : root.tint
     readonly property bool cardLive: host.opened && host.active === 'overview' && !root.stale && root.setting('animated', true)
     readonly property bool opened: host.opened && host.active === root.prefix
     readonly property var tabs: ['Overview','RAM hoarders','Memory lab','About']
@@ -215,7 +229,7 @@ Item {
     }
     readonly property string headline: root.stale ? '—' : Model.readout(root.mem, root.mode)
     readonly property string tag: root.mode===1||root.mode===2 ? 'USED' : 'AVAILABLE'
-    property Component barChip: Component { MemoryChip {compact:true;body:root.themeBg;available:root.mem.availablePct || 0;tint:root.tint;animate:!root.stale && root.setting('animated',true)} }
+    property Component barChip: Component { MemoryChip {compact:true;body:root.barTransparent?'transparent':root.themeBg;available:root.mem.availablePct || 0;tint:root.barTint;animate:!root.stale && root.setting('animated',true)} }
     property Component cardChip: Component { MemoryChip {width:88;height:88;body:Color.popups.background;available:root.mem.availablePct || 0;tint:root.tint;animate:root.cardLive} }
     property Component cardGraph: Component { RamHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;swapTint:root.themeAccent;grid:root.stroke;axisText:root.themeMuted;crosshair:root.strokeStrong;hoverBackground:root.surfaceHover;hoverBorder:root.stroke;hoverForeground:root.themeText;fontFamily:root.themeFont} }
 

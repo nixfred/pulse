@@ -23,6 +23,20 @@ Item {
     readonly property string moduleName: host.moduleName
     readonly property var bar: host.bar
     readonly property color barForeground: host.barForeground
+    // ---- transparent bar -------------------------------------------------
+    // The radio/wired chip drops its fill while the bar is transparent - a
+    // square of the bar surface colour would hang over the wallpaper - and a
+    // lost signal dims the bar's own ink instead of `muted`, a colour chosen to
+    // sit on a slab.
+    readonly property bool barTransparent: root.bar ? root.bar.transparent === true : false
+    readonly property color barInk: root.bar ? root.bar.barForeground : Color.foreground
+    readonly property color barTint: (root.stale && root.barTransparent) ? Util.alpha(root.barInk, 0.55) : root.tint
+    // The caption beneath the chip is 7px text, not a stroke: at the chip's
+    // dimmed alpha its thin glyphs measure barely above the wallpaper, so it
+    // takes the bar's ink whole while the bar is transparent - the same rule
+    // the headline directly above it already follows. The chip still dims, and
+    // the word OFFLINE is what carries the state.
+    readonly property color barCaptionInk: (root.barTransparent && root.stale) ? root.barInk : root.tint
     readonly property bool cardLive: host.opened && host.active === 'overview' && !root.stale && root.setting('animated', true)
     readonly property bool opened: host.opened && host.active === root.prefix
     readonly property var tabs: ['Overview','Wi-Fi','Interfaces','Talkers','Data','Network lab','About']
@@ -332,7 +346,7 @@ Item {
     readonly property var topConstraints: root.constraints.slice(0, 3)
     readonly property string headline: root.stale ? '—' : Model.readout(root.net, root.mode)
     readonly property string tag: Model.modeTag(root.net, root.mode)
-    property Component barChip: Component { NetChip {compact:true;body:Color.bar.background;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint;stops:root.rampStops;animate:!root.stale && root.setting('animated',true)} }
+    property Component barChip: Component { NetChip {compact:true;body:root.barTransparent?'transparent':Color.bar.background;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.barTint;stops:root.rampStops;animate:!root.stale && root.setting('animated',true)} }
     property Component cardChip: Component { NetChip {width:88;height:88;body:Color.popups.background;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint;stops:root.rampStops;animate:root.cardLive} }
     property Component cardGraph: Component { NetHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;latencyTint:root.themeUrgent;upTint:root.themeAccent;axisText:root.dimText;gridLine:root.gridLine;tipBackground:Color.tooltip.background;tipBorder:Color.tooltip.border;tipText:Color.tooltip.text} }
 
