@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "nixfred.pulse",
   "name": "Pulse",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "author": "Fred Nix",
   "license": "MIT",
   "description": "CPU, RAM, Disk and Network in one widget: a summary of all four at the top, and each domain's full dashboard behind its own page.",

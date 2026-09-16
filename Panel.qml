@@ -182,11 +182,13 @@ Panel {
     }
 
     property string version: ''
-    // 1240 logical px: wide enough for the paged tables, the Wi-Fi list, the
-    // thread grid and the storage-lab tiles to use two columns or more, which
-    // is what keeps every fixed page inside a 1000 px-tall screen. The shell
-    // still caps it to the screen's width.
-    property int preferredWidth: 1240
+    // Width is what buys height back: the paged tables, the Wi-Fi list, the
+    // interface cards, the thread grid and the storage-lab tiles all lay out in
+    // columns, so a wider panel is a shorter one. 1240 px is the floor that
+    // keeps every fixed page inside a 1000 px-tall laptop screen; on a bigger
+    // display take up to 2000, which is what puts seven interface cards in two
+    // rows instead of four. An IPC panelWidth() call overrides the binding.
+    property int preferredWidth: Math.round(Math.max(1240, Math.min(2000, panel.availableCardWidth - 60)))
     FileView {
         id: manifestFile
         path: String(Qt.resolvedUrl('manifest.json')).replace(/^file:\/\//, '')

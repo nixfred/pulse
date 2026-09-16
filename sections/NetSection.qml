@@ -49,6 +49,12 @@ Item {
     property Item dashboard: null
     implicitHeight: dashboard ? dashboard.implicitHeight : 0
 
+    // Columns are taken from the width the panel actually has, not fixed. On
+    // a 1600 px laptop screen that is 3 interface cards and 2 network rows; on
+    // a 5120 px ultrawide it is more of each, which is what keeps seven
+    // interfaces inside a 1400 px-tall screen instead of stacking three rows.
+    readonly property int ifaceColumns: Math.max(2, Math.min(6, Math.floor((root.width + 12) / 400)))
+    readonly property int wifiColumns: Math.max(2, Math.min(4, Math.floor((root.width + 12) / 620)))
     readonly property string stateDir: (Quickshell.env('XDG_STATE_HOME') || Quickshell.env('HOME')+'/.local/state')+'/net-pulse'
     readonly property string helper: String(Qt.resolvedUrl('../collectors/net_pulse.py')).replace(/^file:\/\//,'')
     property var net: ({})
@@ -573,7 +579,7 @@ Item {
                             readonly property bool prompting:root.passwordSsid!==''&&root.passwordSsid===modelData.ssid
                             readonly property bool busy:root.wifiKind!==''&&root.wifiSsid===modelData.ssid
                             readonly property bool enterprise:Model.security(modelData.security)==='Enterprise'
-                            width:(mainColumn.width-12)/2;height:prompting?92:58;radius:10
+                            width:(mainColumn.width-12*(root.wifiColumns-1))/root.wifiColumns;height:prompting?92:58;radius:10
                             color:wmouse.containsMouse||prompting?root.surfaceHot:root.surface;border.color:modelData.connected?root.themeAccent:wmouse.containsMouse?root.hairlineHot:root.hairline
                             Behavior on height{NumberAnimation{duration:140}}
                             // Declared first so every button below sits above it.
@@ -632,7 +638,7 @@ Item {
                             readonly property string actionUuid:managed?modelData.nm.uuid:(profiles.length?profiles[0].uuid:'')
                             readonly property string actionName:managed?modelData.nm.connection:(profiles.length?profiles[0].name:'')
                             readonly property bool connected:modelData.nm&&String(modelData.nm.state||'').indexOf('connected')===0
-                            width:(mainColumn.width-24)/3;height:col.implicitHeight+28;radius:14;color:modelData.active?root.surfaceRaised:root.surface;border.color:modelData.active?Qt.alpha(root.themeAccent,0.5):root.hairline
+                            width:(mainColumn.width-12*(root.ifaceColumns-1))/root.ifaceColumns;height:col.implicitHeight+28;radius:14;color:modelData.active?root.surfaceRaised:root.surface;border.color:modelData.active?Qt.alpha(root.themeAccent,0.5):root.hairline
                             Column{id:col;anchors.fill:parent;anchors.margins:14;spacing:10
                                 Row{width:parent.width
                                     Column{width:parent.width-250;spacing:3

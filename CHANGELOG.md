@@ -3,6 +3,33 @@
 The version lives in `manifest.json`. Every release bumps it, adds an entry
 here, and is tagged `vX.Y.Z`: a fix bumps the patch, a new capability the minor.
 
+## 1.2.0 - 2026-09-15
+
+### Performance
+- **The panel builds a dashboard when you open it, not on every click.** Every
+  domain's whole dashboard, plus Overview, Constraints, Settings, About and the
+  chooser, was constructed before anything appeared, and `visible: false` still
+  builds the tree. Each domain's dashboard is now created the first time you
+  open that domain and kept while you stay on it. Thanks to @jbronssin (#2).
+
+### Fixed
+- **The bar chips no longer paint a slab over a transparent bar.** Each chip
+  filled itself with the bar's surface colour, which is invisible on a solid bar
+  and a 26 px plate over the wallpaper on a transparent one; an inactive reading
+  used a muted colour chosen to sit on that slab. The chips now read the bar's
+  own ink and drop the fill when the bar is transparent. Thanks to
+  @dadofsambonzuki (#3).
+- **The installer no longer damages the directory it installs into.** Publishing
+  deleted `.git`, `docs/`, `tools/`, `CHANGELOG.md` and the installer itself from
+  a directory `omarchy plugin add` had cloned into; a failed swap could leave no
+  plugin directory at all while reporting the previous release was still in
+  place; and a missed rescan rolled back an install that had in fact completed.
+  Thanks to @dadofsambonzuki (#4).
+- **Columns follow the screen.** The panel now widens up to 2000 px on a large
+  display instead of a fixed 1240, and the Wi-Fi rows and interface cards take
+  their column count from the width they are given. Seven interface cards were
+  stacking into rows that ran off a 5120x1440 screen.
+
 ## 1.1.1 — 2026-09-13
 
 ### Fixed

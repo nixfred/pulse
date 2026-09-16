@@ -330,14 +330,25 @@ Item {{
     function close() {{ host.close() }}
     function open() {{ host.openSection(root.prefix) }}
     width: parent ? parent.width : 0
-    implicitHeight: mainColumn.implicitHeight
+    property Item dashboard: null
+    implicitHeight: dashboard ? dashboard.implicitHeight : 0
 
 {head}
 {trailing}
 {SUMMARY[name]}
 {comps}
 
-    Column {{
+    // The dashboard is the original plugin's whole panel. Building all four of
+    // them on every click is what made the merged popup take seconds to appear;
+    // tearing them down on close made it take seconds to go. The bar only needs
+    // the readings above. This tree is created the first time you open this
+    // domain, kept while you stay on it (including through the panel's close
+    // fade), and dropped when you leave. (PR #2, jbronssin)
+    Repeater {{
+        model: (host.active === root.prefix && (host.opened || root.dashboard)) ? 1 : 0
+        onItemAdded: function (index, item) {{ root.dashboard = item }}
+        onItemRemoved: function (index, item) {{ if (root.dashboard === item) root.dashboard = null }}
+        Column {{
         id: mainColumn
         width: root.width
         spacing: 14
@@ -356,6 +367,7 @@ Item {{
         }}
 {body}
 {about}
+        }}
     }}
 }}
 '''
@@ -584,6 +596,19 @@ LAYOUT_PATCHES['NetSection.qml'].append(("                    }\n               
 # labels inside the interface action Flow cannot use anchors
 # interface action labels cannot use anchors inside a Flow; three card columns
 LAYOUT_PATCHES['NetSection.qml'].extend([("                                    Label{visible:card.actionUuid==='';text:card.external?'Managed outside NetworkManager ('+card.modelData.nm.state+')':card.profiles.length===0&&card.modelData.kind!=='virtual'?'No saved profile for this device':'Not managed by NetworkManager';font.pixelSize:10;anchors.verticalCenter:parent.verticalCenter}", "                                    Label{visible:card.actionUuid==='';text:card.external?'Managed outside NetworkManager ('+card.modelData.nm.state+')':card.profiles.length===0&&card.modelData.kind!=='virtual'?'No saved profile for this device':'Not managed by NetworkManager';font.pixelSize:10;height:28;verticalAlignment:Text.AlignVCenter}"), ("                                    Label{visible:!card.managed&&card.actionUuid!=='';text:'saved profile · not active';font.pixelSize:10;anchors.verticalCenter:parent.verticalCenter}", "                                    Label{visible:!card.managed&&card.actionUuid!=='';text:'saved profile · not active';font.pixelSize:10;height:28;verticalAlignment:Text.AlignVCenter}"), ("                                    Label{visible:card.managed&&card.modelData.kind==='wifi'&&card.connected;text:'Wi-Fi disconnects live on the Wi-Fi tab';font.pixelSize:10;anchors.verticalCenter:parent.verticalCenter}", "                                    Label{visible:card.managed&&card.modelData.kind==='wifi'&&card.connected;text:'Wi-Fi disconnects live on the Wi-Fi tab';font.pixelSize:10;height:28;verticalAlignment:Text.AlignVCenter}"), ('width:(mainColumn.width-12)/2;height:col.implicitHeight+28;radius:14', 'width:(mainColumn.width-24)/3;height:col.implicitHeight+28;radius:14', 'all')])
+# Columns from the width actually available, so a wide screen gets more columns
+# rather than more rows. Fixed counts pushed seven interface cards into three
+# tall rows on a 5120 px ultrawide.
+LAYOUT_PATCHES['NetSection.qml'].extend([
+    ("    readonly property string stateDir: (Quickshell.env('XDG_STATE_HOME')",
+     "    readonly property int ifaceColumns: Math.max(2, Math.min(6, Math.floor((root.width + 12) / 400)))\n"
+     "    readonly property int wifiColumns: Math.max(2, Math.min(4, Math.floor((root.width + 12) / 620)))\n"
+     "    readonly property string stateDir: (Quickshell.env('XDG_STATE_HOME')"),
+    ("width:(mainColumn.width-12)/2;height:prompting?92:58",
+     "width:(mainColumn.width-12*(root.wifiColumns-1))/root.wifiColumns;height:prompting?92:58"),
+    ("width:(mainColumn.width-24)/3;height:col.implicitHeight+28;radius:14",
+     "width:(mainColumn.width-12*(root.ifaceColumns-1))/root.ifaceColumns;height:col.implicitHeight+28;radius:14"),
+])
 for fname, edits in LAYOUT_PATCHES.items():
     MODEL_PATCHES.setdefault(fname, []).extend(edits)
 for fname, edits in MODEL_PATCHES.items():
