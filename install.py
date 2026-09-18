@@ -53,6 +53,14 @@ def atomic_write(path, payload, mode):
             stream.flush()
             os.fsync(stream.fileno())
         tmp.replace(path)
+        try:
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -72,6 +80,8 @@ def entry_id(entry):
 
 
 def update_layout(raw):
+    if len(raw) > 1_048_576:
+        raise ValueError('shell.json too large')
     data = json.loads(raw) if raw.strip() else {}
     if not isinstance(data, dict):
         raise ValueError('shell.json must contain an object at the top level.')
@@ -150,8 +160,10 @@ def retire_superseded():
     own installers stay where they are, so going back is one enable away.
     """
     for plugin in SUPERSEDED:
-        subprocess.run(['omarchy-shell', '-q', 'shell', 'setPluginEnabled', plugin, 'false'],
-                       capture_output=True, timeout=10, check=False)
+        result = subprocess.run(['omarchy-shell', '-q', 'shell', 'setPluginEnabled', plugin, 'false'],
+                                capture_output=True, timeout=10, check=False)
+        if result.returncode != 0:
+            print('Warning: could not disable superseded plugin ' + plugin)
 
 
 def stage(source, staging):
@@ -161,7 +173,7 @@ def stage(source, staging):
             raise RuntimeError('Missing install payload: ' + name)
         if path.is_dir():
             shutil.copytree(path, staging / name,
-                            ignore=shutil.ignore_patterns('.*', '__pycache__', '*.part'))
+                            ignore=shutil.ignore_patterns('__pycache__', '*.part'))
         else:
             shutil.copy2(path, staging / name)
 
@@ -226,6 +238,7 @@ def ask_shell_to_rescan():
 
 
 def main():
+    os.umask(0o077)
     source = Path(__file__).resolve().parent
     home = Path.home()
     config = home / '.config/omarchy/shell.json'
@@ -314,14 +327,41 @@ def main():
                 entry.rename(retired / name)
             except OSError:
                 pass
-        shutil.rmtree(dest, ignore_errors=True)
-        retired.rename(dest)
+        aside = dest.parent / ('.' + PLUGIN_ID + '.rollback-aside')
+        shutil.rmtree(aside, ignore_errors=True)
+        if dest.exists():
+            try:
+                dest.rename(aside)
+            except OSError:
+                pass
+        try:
+            retired.rename(dest)
+        except OSError:
+            try:
+                if aside.is_dir() and not dest.exists():
+                    aside.rename(dest)
+            except OSError:
+                pass
+            raise
+        if not dest.is_dir() or not (dest / 'Panel.qml').is_file():
+            try:
+                if aside.is_dir():
+                    shutil.rmtree(dest, ignore_errors=True)
+                    if not dest.exists():
+                        aside.rename(dest)
+            except OSError:
+                pass
+        if dest.is_dir() and (dest / 'Panel.qml').is_file():
+            shutil.rmtree(aside, ignore_errors=True)
         for unit in UNITS:
             saved = backup / unit
             if saved.is_file():
                 shutil.copy2(saved, units / unit)
-        subprocess.run(['systemctl', '--user', 'daemon-reload'],
-                       capture_output=True, timeout=30, check=False)
+        result = subprocess.run(['systemctl', '--user', 'daemon-reload'],
+                                capture_output=True, timeout=30, check=False)
+        if result.returncode != 0:
+            print('Warning: daemon-reload failed during rollback; skipping unit restarts.')
+            return
         for unit in UNITS:
             subprocess.run(['systemctl', '--user', 'restart', unit],
                            capture_output=True, timeout=30, check=False)
@@ -339,7 +379,7 @@ def main():
             # or stale unit cannot reintroduce it.
             domain = unit.split('-')[0]
             text = re.sub(r'ExecStart=\S+ \S*%h/\.config/omarchy/plugins/\S+?/' + domain + r'_pulse\.py',
-                          'ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/' + PLUGIN_ID
+                          'ExecStart=python3 %h/.config/omarchy/plugins/' + PLUGIN_ID
                           + '/collectors/' + domain + '_pulse.py', text)
             if (PLUGIN_ID + '/collectors/' + domain + '_pulse.py') not in text:
                 raise RuntimeError('Could not point ' + unit + ' at this plugin\'s collector.')

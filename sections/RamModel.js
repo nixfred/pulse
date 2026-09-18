@@ -1,5 +1,8 @@
 .pragma library
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, Number(v) || 0)) }
+// Audit #14: numeric guards shared with Disk/Net models.
+function num(v, fallback) { var n = Number(v); return isFinite(n) ? n : (fallback === undefined ? 0 : fallback) }
+function has(v) { return v !== null && v !== undefined && isFinite(Number(v)) }
 // Headroom ramp carries meaning, so it stays a traffic light in the theme's
 // own red, yellow and green. Fallbacks stand in for missing keys.
 var RAMP_FALLBACK = {low: '#850d29', mid: '#efcc45', high: '#43f2a1'}

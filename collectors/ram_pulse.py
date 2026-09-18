@@ -35,9 +35,12 @@ def fields(raw):
             pass
     return result
 
+C_LOCALE = dict(os.environ, LC_ALL='C', LANG='C')
+
+
 def run(args, timeout=2):
     try:
-        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False, env=C_LOCALE)
         return p.stdout if p.returncode == 0 else ''
     except (OSError, UnicodeError, subprocess.TimeoutExpired):
         return ''
@@ -302,13 +305,28 @@ def hoarders():
 def metrics(previous=None):
     m = fields(read('/proc/meminfo'))
     total = m.get('MemTotal', 0)
-    if not total or 'MemAvailable' not in m:
+    if not total:
         raise RuntimeError('Kernel memory telemetry unavailable')
-    available = max(0, min(total, m['MemAvailable']))
+    estimated = False
+    if 'MemAvailable' in m:
+        available = max(0, min(total, m['MemAvailable']))
+    else:
+        # Older kernels (pre-3.14) have no MemAvailable: estimate from
+        # free + file-backed caches. Shmem is already counted in Cached and
+        # is not reclaimable, so it is subtracted back out.
+        available = max(0, min(total, m.get('MemFree', 0) + m.get('Buffers', 0)
+                                + m.get('Cached', 0) + m.get('SReclaimable', 0)
+                                - m.get('Shmem', 0)))
+        estimated = True
     psi = {}
     for line in read('/proc/pressure/memory').splitlines():
-        parts = line.split()
-        psi[parts[0]] = {k: float(v) for k, v in (s.split('=') for s in parts[1:])}
+        try:
+            parts = line.split()
+            if not parts:
+                continue
+            psi[parts[0]] = {k: float(v) for k, v in (s.split('=') for s in parts[1:])}
+        except (ValueError, IndexError):
+            continue
     vm = {}
     for line in read('/proc/vmstat').splitlines():
         k, v = line.split()
@@ -333,7 +351,7 @@ def metrics(previous=None):
             'free': m.get('MemFree', 0), 'cache': max(0, m.get('Cached', 0)+m.get('SReclaimable', 0)+m.get('Buffers', 0)-m.get('Shmem', 0)),
             'dirty': m.get('Dirty', 0), 'writeback': m.get('Writeback', 0),
             'swapTotal': m.get('SwapTotal', 0), 'swapUsed': m.get('SwapTotal', 0)-m.get('SwapFree', 0),
-            'psi': psi, 'rates': rates, 'vm': vm, 'swaps': swaps, 'zram': zram,
+            'psi': psi, 'rates': rates, 'vm': vm, 'swaps': swaps, 'zram': zram, 'estimated': estimated,
             'pageSize': os.sysconf('SC_PAGE_SIZE'), 'details': {k: m.get(k, 0) for k in ('AnonPages', 'Shmem', 'Slab', 'PageTables', 'Unevictable', 'Committed_AS')}}
 
 # State files fall into two classes, and a symlink means a different thing to
@@ -454,7 +472,55 @@ def atomic(name, value):
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as stream:
             stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
         tmp.replace(path)
+        dir_fd = os.open(STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def touch_marker(path):
+    # The stamp is opened with O_NOFOLLOW so a symlinked stamp is refused
+    # with ELOOP rather than followed and written through. The caller treats
+    # that as "no invalidation" rather than an error.
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            return
+        raise
+    try:
+        try:
+            os.futimens(fd, None)
+        except AttributeError:
+            os.utime(fd, None)
+    finally:
+        os.close(fd)
+
+
+def write_last_flush(value):
+    # last-flush is replaced atomically (mkstemp + rename) so a crash never
+    # leaves a half-written stamp; rename(2) replaces a symlink at the
+    # destination rather than writing through it.
+    path = STATE / 'last-flush'
+    fd, filename = tempfile.mkstemp(prefix='.last-flush.', suffix='.tmp', dir=STATE)
+    tmp = Path(filename)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        tmp.replace(path)
+        dir_fd = os.open(STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -469,6 +535,9 @@ def atomic(name, value):
 # or a stale one, means nothing is looking and the walk is skipped. History is
 # unaffected: it is recorded from the metrics before the process table is ever
 # attached.
+# Any local process can touch this marker and force one extra scan per tick;
+# that is accepted by design: it is a panel-only optimization, and the worst
+# case is a wasted scan, never a privilege or data issue.
 WANT_PROCESSES = STATE / 'want-processes'
 WANT_TTL = 30
 
@@ -529,6 +598,10 @@ def daemon():
                 start = time.monotonic()
                 try:
                     m = metrics(previous)
+                    if m.get('estimated'):
+                        errors['estimated'] = 'MemAvailable missing; available is estimated from free+buffers+cached+sreclaimable-shmem.'
+                    else:
+                        errors.pop('estimated', None)
                     if start-last_history >= 15 and not blocked:
                         last_history = start
                         try:
@@ -659,11 +732,18 @@ def flush():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError('A flush is already in progress.')
-        last = float(read(STATE / 'last-flush') or 0)
+        try:
+            last = float(read(STATE / 'last-flush') or 0)
+        except (ValueError, TypeError):
+            last = 0
         if time.time()-last < 60:
             raise RuntimeError('Wait one minute between flushes.')
         before = metrics()
-        (STATE / 'last-flush').write_text(str(time.time()))
+        # O_NOFOLLOW probe (cf. touch_marker): a symlinked stamp is refused
+        # with ELOOP rather than followed; the atomic replace below then
+        # swaps the link itself via rename(2) instead of writing through it.
+        touch_marker(STATE / 'last-flush')
+        write_last_flush(str(time.time()))
         os.sync()
         after = metrics()
         return {'message': f"Pending writes: {before['dirty']/1048576:.1f} → {after['dirty']/1048576:.1f} MiB. Available: {before['available']/1073741824:.1f} → {after['available']/1073741824:.1f} GiB. Cache remains reusable."}

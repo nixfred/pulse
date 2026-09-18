@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "DiskModel.js" as Model
+import "../Model.js" as Pulse
 import "Constraints.js" as Constraints
 
 // Disk section of Pulse — the whole of nixfred.disk-pulse's dashboard, hosted
@@ -20,7 +21,9 @@ Item {
     readonly property string prefix: 'disk'
     // Storage-lab tiles spread to the width they are given, so a wide panel
     // shows the same tiles in fewer rows instead of pushing past the screen.
-    readonly property int labColumns: Math.max(4, Math.floor((root.width + 10) / 200))
+    // Capped 2..6 (audit #13): one column is unreadable, more than six tiles
+    // per row squeezes the Stat text to nothing.
+    readonly property int labColumns: Math.max(2, Math.min(6, Math.floor((root.width + 10) / 200)))
     readonly property string moduleName: host.moduleName
     readonly property var bar: host.bar
     readonly property color barForeground: host.barForeground
@@ -72,7 +75,7 @@ Item {
     property var rampPalette: Model.RAMP_FALLBACK
     readonly property color rampWarn: rampPalette.mid
     readonly property color rampGood: rampPalette.high
-    readonly property string helper: String(Qt.resolvedUrl('../collectors/disk_pulse.py')).replace(/^file:\/\//,'')
+    readonly property string helper: Pulse.filePath(Qt.resolvedUrl('../collectors/disk_pulse.py'))
     // Identity for the About line. The manifest is the single source of truth
     // for all three, so bumping a version or moving the repo is one edit there.
     // The constants are the fallback for when the registry is not reachable.
@@ -84,7 +87,7 @@ Item {
     // is plainly running, so the manifest beside this file is the second
     // source: still the manifest, never a version written into the QML.
     property var fileManifest: ({})
-    readonly property string pluginVersion: pluginManifest && pluginManifest.version ? String(pluginManifest.version) : fileManifest.version ? String(fileManifest.version) : ''
+    readonly property string pluginVersion: Pulse.resolveVersion(root.pluginManifest, root.fileManifest)
     readonly property string repoUrl: pluginManifest && pluginManifest.repository ? String(pluginManifest.repository) : fileManifest.repository ? String(fileManifest.repository) : 'https://github.com/nixfred/disk.pulse'
     readonly property string homeUrl: pluginManifest && pluginManifest.homepage ? String(pluginManifest.homepage) : fileManifest.homepage ? String(fileManifest.homepage) : 'https://nixfred.com'
     property var disk: ({})
@@ -94,8 +97,11 @@ Item {
     property int range: 3600
     property bool chooseMode: false
     property string actionStatus: ''
+    // Status lines expire after 8s (audit #20), mirroring the merged Panel.
+    onActionStatusChanged: if (actionStatus !== '') statusExpiry.restart()
+    Timer { id: statusExpiry; interval: 8000; onTriggered: if (root.actionStatus !== '') root.actionStatus = '' }
     property real now: Date.now()/1000
-    readonly property bool stale: !disk.ts || now-disk.ts > 15
+    readonly property bool stale: !disk.ts || now-disk.ts > Pulse.STALE_DISK_S
     readonly property int mode: Model.clamp(setting('displayMode',0),0,5)
     readonly property string mountpoint: String(setting('mountpoint','/') || '/')
     readonly property bool showReadout: setting('showReadout',true) !== false
@@ -148,11 +154,13 @@ Item {
     }
     // The panel closes first, so the page is never opened behind a popup the
     // same click dismissed. xdg-open is detached: a cold browser start must not
-    // block the shell's event loop.
+    // block the shell's event loop. Only https: targets (audit #27).
     function openUrl(url) {
         if(!url) return
+        var target = String(url)
+        if (!Pulse.isHttps(target)) { root.actionStatus = 'Refused to open a non-HTTPS link.'; return }
         root.close()
-        Quickshell.execDetached(['xdg-open',url])
+        Quickshell.execDetached(['xdg-open',target])
     }
     // A pool mounted many times names its first two other mounts and counts
     // the rest, so the row stays one line at any number of subvolumes.
@@ -233,16 +241,16 @@ Item {
     FileView {
         id:snapshotFile; path:root.stateDir+'/snapshot.json'; watchChanges:true; printErrors:false
         onFileChanged:reload()
-        onLoaded:{try{var m=JSON.parse(text());if(m.ts>0)root.disk=m}catch(e){}}
+        onLoaded:{try{var m=Pulse.safeParse(text(),null);if(m&&m.ts>0)root.disk=m}catch(e){}}
     }
     FileView {
         id:historyFile; path:root.stateDir+'/history.json'; watchChanges:true; printErrors:false
         onFileChanged:reload()
-        onLoaded:{try{root.histories=JSON.parse(text())}catch(e){}}
+        onLoaded:{try{var h=Pulse.safeParse(text(),null);if(h)root.histories=h}catch(e){}}
     }
     FileView {
-        id:manifestFile; path:String(Qt.resolvedUrl('../manifest.json')).replace(/^file:\/\//,''); printErrors:false
-        onLoaded:{try{var m=JSON.parse(text());if(m&&typeof m==='object')root.fileManifest=m}catch(e){}}
+        id:manifestFile; path:Pulse.filePath(Qt.resolvedUrl('../manifest.json')); printErrors:false
+        onLoaded:{try{var m=Pulse.safeParse(text(),null);if(m&&typeof m==='object')root.fileManifest=m}catch(e){}}
     }
     FileView {
         // The theme's own palette, for the three ramp stops the shell does not
@@ -312,8 +320,8 @@ Item {
     }
     readonly property string headline: root.stale ? '—' : Model.readout(root.disk, root.mode, root.mountpoint)
     readonly property string tag: Model.modeTag(root.disk, root.mode)
-    property Component barChip: Component { DiskChip {compact:true;body:root.barTransparent?'transparent':root.themeBg;glint:root.barForeground;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.barTint;animate:!root.stale && root.setting('animated',true)} }
-    property Component cardChip: Component { DiskChip {width:88;height:88;body:Color.popups.background;glint:root.themeText;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.tint;animate:root.cardLive} }
+    property Component barChip: Component { DiskChip {compact:true;body:root.barTransparent?'transparent':root.themeBg;glint:root.barForeground;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.barTint;panelOpen:host.opened;animate:!root.stale && root.setting('animated',true)} }
+    property Component cardChip: Component { DiskChip {width:88;height:88;body:Color.popups.background;glint:root.themeText;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.tint;panelOpen:host.opened;animate:root.cardLive} }
     property Component cardGraph: Component { DiskHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;writeTint:root.themeAccent;busyTint:root.rampWarn;usedTint:root.themeText;grid:root.stroke;axisText:root.themeMuted;crosshair:root.strokeStrong;hoverBackground:root.surfaceHover;hoverBorder:root.stroke;hoverForeground:root.themeText;fontFamily:root.themeFont} }
 
     component Label: Text {
@@ -391,7 +399,7 @@ Item {
                     Rectangle {
                         width:parent.width;height:170;radius:16;border.color:Qt.alpha(root.tint,0.45)
                         gradient:Gradient {GradientStop{position:0;color:Qt.alpha(root.tint,0.13)}GradientStop{position:1;color:root.surface}}
-                        DiskChip {id:heroChip;body:root.themeBg;glint:root.themeText;x:12;y:5;width:160;height:160;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.tint;animate:root.opened&&root.tab===0&&!root.stale&&root.setting('animated',true)}
+                        DiskChip {id:heroChip;body:root.themeBg;glint:root.themeText;x:12;y:5;width:160;height:160;free:root.chipFree;activity:root.activity;reading:root.reading;writing:root.writing;tint:root.tint;panelOpen:host.opened;animate:root.opened&&root.tab===0&&!root.stale&&root.setting('animated',true)}
                         Column {x:188;y:20;spacing:6
                             Label{text:'FREE SPACE ON '+(root.primary?root.primary.mount:root.mountpoint).toUpperCase();font.pixelSize:11;font.letterSpacing:2}
                             Row {spacing:10

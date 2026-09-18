@@ -38,7 +38,7 @@ Panel {
     // reads a stale answer to a question they never asked.
     property string actionStatus: ''
     onActionStatusChanged: if (actionStatus !== '') statusExpiry.restart()
-    Timer { id: statusExpiry; interval: 8000; onTriggered: root.actionStatus = '' }
+    Timer { id: statusExpiry; interval: Model.STATUS_EXPIRY_MS; onTriggered: root.actionStatus = '' }
     readonly property var pages: [
         {key: 'overview',    label: 'Overview'},
         {key: 'constraints', label: 'Constraints'},
@@ -56,11 +56,15 @@ Panel {
     // Theme roles. One decision — the popup text colour — drives the whole
     // surface, exactly as each of the four plugins did on its own, so the
     // merged chrome sits in the same visual language as the ported bodies.
-    readonly property color ink: Color.popups.text
+    // Null-guarded with a fallback palette (audit #25): a missing role keeps
+    // a readable default instead of breaking the binding.
+    readonly property color ink: Model.role(Color.popups, 'text', '#edf5f7')
     readonly property color inkDim: Util.alpha(ink, 0.66)
     readonly property color card: Util.alpha(ink, 0.05)
     readonly property color cardEdge: Util.alpha(ink, 0.15)
     readonly property color rule: Util.alpha(ink, 0.14)
+    // Shared chrome metrics + severity scale (audit #22).
+    PulseChrome { id: chrome; ink: root.ink; inkDim: root.inkDim; card: root.card; cardEdge: root.cardEdge }
 
     readonly property int pageIndex: {
         for (var i = 0; i < root.pages.length; i++)
@@ -214,8 +218,36 @@ Panel {
         if (!saved) root.actionStatus = 'Changed for now, but it could not be saved to shell.json.'
         return saved
     }
-    function openSection(key) { root.chooseMode = false; root.active = key; root.open() }
-    function showPage(key) { root.active = key }
+    function openSection(key) {
+        var k = String(key || 'overview')
+        if (!root.isValidPage(k)) { root.actionStatus = 'No such page: ' + k; k = 'overview' }
+        root.chooseMode = false; root.active = k; root.open()
+    }
+    function showPage(key) {
+        var k = String(key || 'overview')
+        if (!root.isValidPage(k)) { root.actionStatus = 'No such page: ' + k; k = 'overview' }
+        root.active = k
+    }
+    // Whitelist for every IPC/page entry point (audit #4, #30): unknown keys
+    // fall back to overview and say so, instead of landing on a blank page.
+    // Clamping still guards numeric ranges silently; invalid names are
+    // reported here before any clamping happens.
+    function isValidPage(key) {
+        for (var i = 0; i < root.pages.length; i++) if (root.pages[i].key === key) return true
+        return false
+    }
+    // Called by sections (Net tab switches) to return the page to the top
+    // (audit #3). The section cannot see the Flickable's id, so the Panel
+    // exposes this instead of the section reaching across scope.
+    function resetScroll() { try { scroller.contentY = 0 } catch (e) {} }
+    // Never throws (audit #2): a corrupt recorder snapshot parses to null
+    // rather than breaking the whole status reply.
+    function sectionStatus(section) {
+        try {
+            if (!section || !section.status) return null
+            return Model.safeParse(section.status(), null)
+        } catch (e) { return null }
+    }
     function status() {
         var visible = {}
         for (var vi = 0; vi < root.domainKeys.length; vi++)
@@ -236,27 +268,31 @@ Panel {
             // paints over its neighbour.
             barReserved: Math.round(button.vertical ? button.implicitHeight : button.implicitWidth), barDrawn: Math.round((button.vertical ? barColumn.implicitHeight : barRow.implicitWidth) + 12),
             panelPad: panel.padding,
-            cpu: cpuSection.status ? JSON.parse(cpuSection.status()) : null,
-            ram: ramSection.status ? JSON.parse(ramSection.status()) : null,
-            disk: diskSection.status ? JSON.parse(diskSection.status()) : null,
-            net: netSection.status ? JSON.parse(netSection.status()) : null,
-            gpu: gpuSection.status ? JSON.parse(gpuSection.status()) : null
+            cpu: root.sectionStatus(cpuSection),
+            ram: root.sectionStatus(ramSection),
+            disk: root.sectionStatus(diskSection),
+            net: root.sectionStatus(netSection),
+            gpu: root.sectionStatus(gpuSection)
         })
     }
 
     property string version: ''
     // Width is what buys height back: the paged tables, the Wi-Fi list, the
     // interface cards, the thread grid and the storage-lab tiles all lay out in
-    // columns, so a wider panel is a shorter one. 1240 px is the floor that
-    // keeps every fixed page inside a 1000 px-tall laptop screen; on a bigger
-    // display take up to 2000, which is what puts seven interface cards in two
-    // rows instead of four. An IPC panelWidth() call overrides the binding.
-    property int preferredWidth: Math.round(Math.max(1240, Math.min(2000, panel.availableCardWidth - 60)))
+    // columns, so a wider panel is a shorter one. Geometry limits live in
+    // Model.js (audits #1, #11, #24): the default binding floors at PANEL_MIN
+    // (640) so narrow screens still fit, and caps at PANEL_MAX (2000). An IPC
+    // panelWidth() call stores a clamped override without destroying this
+    // binding; the binding applies again while no override is stored.
+    property var preferredWidthOverride: null
+    property int preferredWidth: root.preferredWidthOverride !== null && root.preferredWidthOverride !== undefined
+        ? root.preferredWidthOverride
+        : Math.round(Math.max(Model.PANEL_MIN, Math.min(Model.PANEL_MAX, panel.availableCardWidth - 60)))
     FileView {
         id: manifestFile
-        path: String(Qt.resolvedUrl('manifest.json')).replace(/^file:\/\//, '')
+        path: Model.filePath(Qt.resolvedUrl('manifest.json'))
         printErrors: false
-        onLoaded: { try { root.version = String(JSON.parse(text()).version || '') } catch (e) {} }
+        onLoaded: { try { root.version = Model.versionFrom(text()) } catch (e) {} }
     }
 
     IpcHandler {
@@ -272,26 +308,47 @@ Panel {
         function pin(page: string): void { root.pinBar(String(page || 'auto'), null) }
         // Check or uncheck one module's bar checkbox without opening the panel.
         // Persists to shell.json like every other setting; refuses to hide the
-        // last visible module. Accepts 'true'/'false'/1/0 as well as booleans.
-        function barShow(page: string, value: bool): void { root.setBarShown(String(page || ''), value) }
+        // last visible module. Accepts 'true'/'false'/'1'/'0'/1/0 as well as
+        // booleans (audit #5: normalise via Model.toBool, signature bool->var).
+        function barShow(page: string, value: var): void { root.setBarShown(String(page || ''), Model.toBool(value)) }
         // Check every module and return the bar to auto.
         function showAllBars(): void { root.showAllBars() }
         // Jump straight to one domain's dashboard — the replacement for the
-        // four plugins' separate `open` calls.
+        // four plugins' separate `open` calls. Unknown pages fall back to
+        // overview with a status line (audit #4, inside openSection).
         function show(page: string): void { root.openSection(String(page || 'overview')) }
-        function panelWidth(value: int): void { root.preferredWidth = Math.max(640, value) }
+        // Clamped to Model.PANEL_MIN..MAX (audit #6); non-numeric input is
+        // reported, not silently stored. Stored as an override so the default
+        // width binding is not destroyed.
+        function panelWidth(value: var): void {
+            var n = Number(value)
+            if (!isFinite(n)) { root.actionStatus = 'Panel width must be a number.'; return }
+            root.preferredWidthOverride = Math.round(Model.clamp(n, Model.PANEL_MIN, Model.PANEL_MAX))
+        }
         function showTab(page: string, value: int): void {
-            root.openSection(String(page || 'overview'))
-            var s = root.sectionFor(String(page || ''))
-            if (s) s.tab = Model.clamp(value, 0, s.lastTab)
+            var key = String(page || 'overview')
+            root.openSection(key)
+            var s = root.sectionFor(key)
+            if (!s) return
+            var n = Number(value)
+            if (!isFinite(n) || n < 0 || n > s.lastTab)
+                root.actionStatus = 'No such tab: ' + value + ' on ' + key
+            s.tab = Model.clamp(n, 0, s.lastTab)
         }
         function display(page: string, value: int): void {
-            var s = root.sectionFor(String(page || ''))
-            if (s) s.setMode(value)
+            var key = String(page || '')
+            var s = root.sectionFor(key)
+            if (!s) { root.actionStatus = 'No such page: ' + key; return }
+            var n = Number(value)
+            if (!isFinite(n) || n < 0 || n > s.modeCount - 1) { root.actionStatus = 'No such readout: ' + value + ' on ' + key; return }
+            s.setMode(n)
         }
         function historyRange(page: string, value: int): void {
-            var s = root.sectionFor(String(page || ''))
-            if (s && [3600, 86400, 604800].indexOf(value) >= 0) s.range = value
+            var key = String(page || '')
+            var s = root.sectionFor(key)
+            if (!s) { root.actionStatus = 'No such page: ' + key; return }
+            if (Model.VALID_RANGES.indexOf(Number(value)) < 0) { root.actionStatus = 'No such history range: ' + value; return }
+            s.range = Number(value)
         }
     }
     function sectionFor(key) {
@@ -355,9 +412,11 @@ Panel {
         //     the Disk domain ("FREE SPACE ON /HOME/PI/GOOGLE"), so an
         //     unbounded caption could ask the bar to re-lay out by a hundred
         //     pixels between one sample and the next.
-        readonly property int captionCeiling: 110
-        // One cell per checked module. The Loader sits directly in the cell
-        // Row: wrapping it in an Item whose width came from the Loader's own
+        readonly property int captionCeiling: Model.CAPTION_CEIL
+        // One cell per checked module (audit #21). The shape lives in
+        // BarCell.qml — one file for both orientations — so the horizontal and
+        // vertical entries cannot drift apart. The Loader sits directly in the
+        // cell: wrapping it in an Item whose width came from the Loader's own
         // implicitWidth while the Loader was anchored centerIn to that same
         // Item was a sizing loop, which could resolve to zero and drop the
         // chip out of the measured width entirely.
@@ -373,60 +432,27 @@ Panel {
             visible: !button.vertical
             Repeater {
                 model: root.barCells
-                Row {
+                BarCell {
                     required property var modelData
                     required property int index
-                    spacing: 5
-                    Loader {
-                        anchors.verticalCenter: parent.verticalCenter
-                        // Keyed on the domain so the chip is rebuilt when the
-                        // set changes, rather than a stale one being re-bound.
-                        sourceComponent: modelData.barChip
+                    chip: modelData.barChip
+                    headline: modelData.headline
+                    caption: {
+                        // A lone auto cell keeps the legacy caption (the
+                        // constraint, or ALL CLEAR), so unchecking down to
+                        // one module reads exactly like the old icon did.
+                        // Two or more cells use title plus readout tag per
+                        // cell, which is what stays a stable width.
+                        if (modelData.stale) return modelData.sectionTitle.toUpperCase() + ' · OFFLINE'
+                        if (root.barCells.length === 1 && root.barAuto) return root.barCaption
+                        return modelData.sectionTitle.toUpperCase() + ' · ' + modelData.tag
                     }
-                    Column {
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 0
-                        Text {
-                            text: modelData.headline
-                            color: root.barForeground
-                            font.family: Style.font.family
-                            font.pixelSize: 12
-                            font.bold: true
-                            elide: Text.ElideRight
-                            width: Math.min(implicitWidth, button.captionCeiling)
-                            textFormat: Text.PlainText
-                        }
-                        Text {
-                            // A lone auto cell keeps the legacy caption (the
-                            // constraint, or ALL CLEAR), so unchecking down to
-                            // one module reads exactly like the old icon did.
-                            // Two or more cells use title plus readout tag per
-                            // cell, which is what stays a stable width.
-                            text: {
-                                if (modelData.stale) return modelData.sectionTitle.toUpperCase() + ' · OFFLINE'
-                                if (root.barCells.length === 1 && root.barAuto) return root.barCaption
-                                return modelData.sectionTitle.toUpperCase() + ' · ' + modelData.tag
-                            }
-                            color: modelData.barCaptionInk
-                            font.pixelSize: 7
-                            font.letterSpacing: 0.6
-                            font.bold: true
-                            elide: Text.ElideRight
-                            width: Math.min(implicitWidth, button.captionCeiling)
-                            textFormat: Text.PlainText
-                        }
-                    }
-                    // Separator between cells, never after the last one.
-                    // Resolved from modelData rather than the Repeater's
-                    // index, which nested children cannot reliably see here.
-                    Rectangle {
-                        visible: root.barCells.indexOf(modelData) < root.barCells.length - 1
-                        width: 1
-                        height: 22
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: root.barForeground
-                        opacity: 0.18
-                    }
+                    foreground: root.barForeground
+                    captionInk: modelData.barCaptionInk
+                    ceiling: button.captionCeiling
+                    isVertical: false
+                    showSeparator: root.barCells.indexOf(modelData) < root.barCells.length - 1
+                    fontFamily: Model.role(Style.font, 'family', 'sans-serif')
                 }
             }
         }
@@ -437,48 +463,22 @@ Panel {
             visible: button.vertical
             Repeater {
                 model: root.barCells
-                Column {
+                BarCell {
                     required property var modelData
                     required property int index
-                    spacing: 2
-                    Loader {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        sourceComponent: modelData.barChip
+                    chip: modelData.barChip
+                    headline: modelData.headline
+                    caption: {
+                        if (modelData.stale) return modelData.sectionTitle.toUpperCase() + ' · OFFLINE'
+                        if (root.barCells.length === 1 && root.barAuto) return root.barCaption
+                        return modelData.sectionTitle.toUpperCase() + ' · ' + modelData.tag
                     }
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: modelData.headline
-                        color: root.barForeground
-                        font.family: Style.font.family
-                        font.pixelSize: 12
-                        font.bold: true
-                        elide: Text.ElideRight
-                        width: Math.min(implicitWidth, button.captionCeiling)
-                        textFormat: Text.PlainText
-                    }
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: {
-                            if (modelData.stale) return modelData.sectionTitle.toUpperCase() + ' · OFFLINE'
-                            if (root.barCells.length === 1 && root.barAuto) return root.barCaption
-                            return modelData.sectionTitle.toUpperCase() + ' · ' + modelData.tag
-                        }
-                        color: modelData.barCaptionInk
-                        font.pixelSize: 7
-                        font.letterSpacing: 0.6
-                        font.bold: true
-                        elide: Text.ElideRight
-                        width: Math.min(implicitWidth, button.captionCeiling)
-                        textFormat: Text.PlainText
-                    }
-                    Rectangle {
-                        visible: root.barCells.indexOf(modelData) < root.barCells.length - 1
-                        width: 22
-                        height: 1
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        color: root.barForeground
-                        opacity: 0.18
-                    }
+                    foreground: root.barForeground
+                    captionInk: modelData.barCaptionInk
+                    ceiling: button.captionCeiling
+                    isVertical: true
+                    showSeparator: root.barCells.indexOf(modelData) < root.barCells.length - 1
+                    fontFamily: Model.role(Style.font, 'family', 'sans-serif')
                 }
             }
         }
@@ -517,9 +517,11 @@ Panel {
         signal clicked()
         implicitWidth: caption.implicitWidth + 26
         implicitHeight: 34
-        radius: 9
-        color: act.selected ? Qt.alpha(accent, Style.selectedFillAlpha) : area.containsMouse ? Style.hoverFill : Style.normalFill
-        border.color: act.selected ? accent : area.containsMouse ? Style.hoverBorderColor : Style.normalBorderColor
+        radius: chrome.actionRadius
+        // Style roles null-guarded (audit #25): fall back to ink-derived
+        // fills rather than breaking the binding if a role is missing.
+        color: act.selected ? Qt.alpha(accent, Model.role(Style, 'selectedFillAlpha', 0.18)) : area.containsMouse ? Model.role(Style, 'hoverFill', Qt.alpha(root.ink, 0.08)) : Model.role(Style, 'normalFill', 'transparent')
+        border.color: act.selected ? accent : area.containsMouse ? Model.role(Style, 'hoverBorderColor', root.cardEdge) : Model.role(Style, 'normalBorderColor', root.cardEdge)
         Behavior on color { ColorAnimation { duration: 120 } }
         Text {
             id: caption
@@ -568,7 +570,7 @@ Panel {
                     event.accepted = true
                 }
             }
-            Rectangle { anchors.fill: parent; anchors.margins: -10; radius: 14; color: Color.popups.background }
+            Rectangle { anchors.fill: parent; anchors.margins: -10; radius: 14; color: Model.role(Color.popups, 'background', '#10181d') }
 
             Flickable {
                 id: scroller
@@ -605,7 +607,10 @@ Panel {
                         width: parent.width
                         spacing: 10
                         Column {
-                            width: parent.width - 290
+                            // Guarded (audit #12): on a very narrow panel the
+                            // fixed 280px verdict pill would otherwise push
+                            // this width at or below zero.
+                            width: Math.max(120, parent.width - 290)
                             spacing: 3
                             Heading {
                                 text: {
@@ -617,6 +622,9 @@ Panel {
                                 font.letterSpacing: 3
                             }
                             Label {
+                                width: parent.width
+                                elide: Text.ElideRight
+                                wrapMode: Text.NoWrap
                                 text: {
                                     var tail = root.version !== '' ? '   ·   v' + root.version : ''
                                     if (root.chooseMode) return 'Choose what the bar icon shows.' + tail
@@ -630,7 +638,7 @@ Panel {
                             id: verdictPill
                             width: 280
                             height: 32
-                            radius: 16
+                            radius: chrome.pillRadius
                             // On a domain page the pill speaks for that domain.
                             // On Overview, Settings or About it speaks for the
                             // unhappiest domain, which is the reading you most

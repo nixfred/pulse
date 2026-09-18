@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "RamModel.js" as Model
+import "../Model.js" as Pulse
 import "Constraints.js" as Constraints
 
 // RAM section of Pulse — the whole of nixfred.ram-pulse's dashboard, hosted
@@ -69,7 +70,7 @@ Item {
     property var rampPalette: Model.RAMP_FALLBACK
     readonly property color rampWarn: rampPalette.mid
     readonly property color rampGood: rampPalette.high
-    readonly property string helper: String(Qt.resolvedUrl('../collectors/ram_pulse.py')).replace(/^file:\/\//,'')
+    readonly property string helper: Pulse.filePath(Qt.resolvedUrl('../collectors/ram_pulse.py'))
     // Identity for the About line. The manifest is the single source of truth
     // for all three, so bumping a version or moving the repo is one edit there.
     // The registry stays the first choice where the shell exposes it; on
@@ -83,15 +84,15 @@ Item {
     property var fileManifest: null
     FileView {
         id:manifestFile
-        path:String(Qt.resolvedUrl('../manifest.json')).replace(/^file:\/\//,'')
+        path:Pulse.filePath(Qt.resolvedUrl('../manifest.json'))
         watchChanges:true; printErrors:false
         onFileChanged:reload()
-        onLoaded:{try{var m=JSON.parse(text());if(m && m.id)root.fileManifest=m}catch(e){}}
+        onLoaded:{try{var m=Pulse.safeParse(text(),null);if(m && m.id)root.fileManifest=m}catch(e){}}
     }
     readonly property var pluginManifest: root.registryManifest || root.fileManifest
-    readonly property string pluginVersion: pluginManifest && pluginManifest.version ? String(pluginManifest.version) : ''
-    readonly property string repoUrl: pluginManifest && pluginManifest.repository ? String(pluginManifest.repository) : 'https://github.com/nixfred/ram.plugin.omarchy'
-    readonly property string homeUrl: pluginManifest && pluginManifest.homepage ? String(pluginManifest.homepage) : 'https://nixfred.com'
+    readonly property string pluginVersion: Pulse.resolveVersion(root.registryManifest, root.fileManifest)
+    readonly property string repoUrl: root.pluginManifest && root.pluginManifest.repository ? String(root.pluginManifest.repository) : 'https://github.com/nixfred/ram.plugin.omarchy'
+    readonly property string homeUrl: root.pluginManifest && root.pluginManifest.homepage ? String(root.pluginManifest.homepage) : 'https://nixfred.com'
     property var mem: ({})
     property var histories: ({})
     property int tab: 0
@@ -99,8 +100,11 @@ Item {
     property int range: Model.RANGES[0].seconds
     property bool chooseMode: false
     property string actionStatus: ''
+    // Status lines expire after 8s (audit #20), mirroring the merged Panel.
+    onActionStatusChanged: if (actionStatus !== '') statusExpiry.restart()
+    Timer { id: statusExpiry; interval: 8000; onTriggered: if (root.actionStatus !== '') root.actionStatus = '' }
     property real now: Date.now()/1000
-    readonly property bool stale: !mem.ts || now-mem.ts > 15
+    readonly property bool stale: !mem.ts || now-mem.ts > Pulse.STALE_RAM_S
     readonly property int mode: Model.clamp(setting('displayMode',0),0,3)
     readonly property color tint: stale ? themeMuted : Model.ramp(mem.availablePct,rampPalette)
     readonly property real pressure: mem.psi && mem.psi.some ? mem.psi.some.avg10 : 0
@@ -142,11 +146,14 @@ Item {
     }
     // The panel closes first, so the page is never opened behind a popup the
     // same click dismissed. xdg-open is detached: a cold browser start must not
-    // block the shell's event loop.
+    // block the shell's event loop. Only https: targets are opened (audit
+    // #27); anything else is reported rather than handed to the desktop.
     function openUrl(url) {
         if(!url) return
+        var target = String(url)
+        if (!Pulse.isHttps(target)) { root.actionStatus = 'Refused to open a non-HTTPS link.'; return }
         root.close()
-        Quickshell.execDetached(['xdg-open',url])
+        Quickshell.execDetached(['xdg-open',target])
     }
     function status() {
         return JSON.stringify({opened:opened,pendingKill:pendingKill?pendingKill.pid:0,version:pluginVersion,mode:mode,readout:Model.readout(mem,mode),tint:String(tint),stale:stale,samples:chart.count || 0,tab:tab,chooseMode:chooseMode,total:mem.total,available:mem.available,hoarders:rows.length,groups:groups.length,grouped:grouped,action:actionStatus})
@@ -155,12 +162,12 @@ Item {
     FileView {
         id:snapshotFile; path:root.stateDir+'/snapshot.json'; watchChanges:true; printErrors:false
         onFileChanged:reload()
-        onLoaded:{try{var m=JSON.parse(text());if(m.total>0)root.mem=m}catch(e){}}
+        onLoaded:{try{var m=Pulse.safeParse(text(),null);if(m&&m.total>0)root.mem=m}catch(e){}}
     }
     FileView {
         id:historyFile; path:root.stateDir+'/history.json'; watchChanges:true; printErrors:false
         onFileChanged:reload()
-        onLoaded:{try{root.histories=JSON.parse(text())}catch(e){}}
+        onLoaded:{try{var h=Pulse.safeParse(text(),null);if(h)root.histories=h}catch(e){}}
     }
     FileView {
         // The theme's own palette, for the three ramp stops the shell does not
@@ -230,8 +237,8 @@ Item {
     }
     readonly property string headline: root.stale ? '—' : Model.readout(root.mem, root.mode)
     readonly property string tag: root.mode===1||root.mode===2 ? 'USED' : 'AVAILABLE'
-    property Component barChip: Component { MemoryChip {compact:true;body:root.barTransparent?'transparent':root.themeBg;available:root.mem.availablePct || 0;tint:root.barTint;animate:!root.stale && root.setting('animated',true)} }
-    property Component cardChip: Component { MemoryChip {width:88;height:88;body:Color.popups.background;available:root.mem.availablePct || 0;tint:root.tint;animate:root.cardLive} }
+    property Component barChip: Component { MemoryChip {compact:true;body:root.barTransparent?'transparent':root.themeBg;available:root.mem.availablePct || 0;tint:root.barTint;panelOpen:host.opened;animate:!root.stale && root.setting('animated',true)} }
+    property Component cardChip: Component { MemoryChip {width:88;height:88;body:Color.popups.background;available:root.mem.availablePct || 0;tint:root.tint;panelOpen:host.opened;animate:root.cardLive} }
     property Component cardGraph: Component { RamHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;swapTint:root.themeAccent;grid:root.stroke;axisText:root.themeMuted;crosshair:root.strokeStrong;hoverBackground:root.surfaceHover;hoverBorder:root.stroke;hoverForeground:root.themeText;fontFamily:root.themeFont} }
 
     component Label: Text {
@@ -298,7 +305,7 @@ Item {
                     Rectangle {
                         width:parent.width;height:170;radius:16;border.color:Qt.alpha(root.tint,0.45)
                         gradient:Gradient {GradientStop{position:0;color:Qt.alpha(root.tint,0.13)}GradientStop{position:1;color:root.surface}}
-                        MemoryChip {id:heroChip;body:root.themeBg;x:12;y:5;width:160;height:160;available:root.mem.availablePct || 0;tint:root.tint;animate:root.opened&&root.tab===0&&!root.stale&&root.setting('animated',true)}
+                        MemoryChip {id:heroChip;body:root.themeBg;x:12;y:5;width:160;height:160;available:root.mem.availablePct || 0;tint:root.tint;panelOpen:host.opened;animate:root.opened&&root.tab===0&&!root.stale&&root.setting('animated',true)}
                         Column {x:188;y:20;spacing:6
                             Label{text:'AVAILABLE HEADROOM';font.pixelSize:11;font.letterSpacing:2}
                             Row {spacing:10
@@ -344,7 +351,7 @@ Item {
                             Rectangle{width:parent.width;height:5;radius:3;color:root.stroke
                                 Rectangle{width:parent.width*Model.clamp(root.mem.swapTotal?root.mem.swapUsed/root.mem.swapTotal:0,0,1);height:parent.height;radius:3;color:root.themeAccent;Behavior on width{NumberAnimation{duration:800}}}
                             }
-                            Label{text:root.mem.zram?'zram stores '+Model.size(root.mem.zram.original)+' in '+Model.size(root.mem.zram.physical)+' of real RAM  ·  '+(root.mem.zram.physical?root.mem.zram.original/root.mem.zram.physical:0).toFixed(1)+'× effective ratio':'Reading compressed swap…';font.pixelSize:11}
+                            Label{text:root.mem.zram && Model.has((root.mem.zram||{}).physical) && Model.has((root.mem.zram||{}).original)?'zram stores '+Model.size(root.mem.zram.original)+' in '+Model.size(root.mem.zram.physical)+' of real RAM  ·  '+(Model.num(root.mem.zram.physical, 0) > 0 ? (Model.num(root.mem.zram.original)/Model.num(root.mem.zram.physical)).toFixed(1) : '—')+'× effective ratio':'Reading compressed swap…';font.pixelSize:11}
                             Label{text:'In '+Model.size(root.mem.rates?root.mem.rates.pswpin*root.mem.pageSize:0)+'/s  ·  Out '+Model.size(root.mem.rates?root.mem.rates.pswpout*root.mem.pageSize:0)+'/s  ·  swap allocation alone does not mean active thrashing';font.pixelSize:10}
                         }
                     }

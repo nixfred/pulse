@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Net Pulse: unprivileged network telemetry, persistent history, validated actions."""
 import argparse
+import errno
 import fcntl
 import json
 import os
@@ -8,10 +9,13 @@ from pathlib import Path
 import re
 import socket
 import sqlite3
+import stat
 import subprocess
+import tempfile
 import time
 
-STATE = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'net-pulse'
+_state_home = os.environ.get('XDG_STATE_HOME', '')
+STATE = (Path(_state_home) if os.path.isabs(_state_home) else Path.home() / '.local/state') / 'net-pulse'
 ENV_KEYS = {'HERDR_ENV', 'HERDR_SOCKET_PATH', 'HERDR_WORKSPACE_ID', 'HERDR_TAB_ID', 'HERDR_PANE_ID', 'TMUX', 'TMUX_PANE', 'BOOMUX_SHELL_ID'}
 PROBE = '1.1.1.1'
 PROBE6 = '2606:4700:4700::1111'
@@ -456,13 +460,19 @@ def tcp_stats(snmp=None, sockstat=None, sockstat6=None):
             keys, values = lines[i].split()[1:], lines[i + 1].split()[1:]
             for k, v in zip(keys, values):
                 if k in ('ActiveOpens', 'PassiveOpens', 'AttemptFails', 'EstabResets', 'CurrEstab', 'InSegs', 'OutSegs', 'RetransSegs', 'InErrs', 'OutRsts'):
-                    out[k] = int(v)
+                    try:
+                        out[k] = int(v)
+                    except ValueError:
+                        continue
     for line in sockstat.splitlines():
         head, _, rest = line.partition(':')
         v = rest.split()
         if head in ('TCP', 'UDP'):
-            for k, val in zip(v[0::2], v[1::2]):
-                out[head.lower() + k.capitalize()] = int(val)
+            try:
+                for k, val in zip(v[0::2], v[1::2]):
+                    out[head.lower() + k.capitalize()] = int(val)
+            except ValueError:
+                continue
     # Only the in-use counts are per-family; allocation and memory are shared,
     # so adding those would double-count them.
     for line in sockstat6.splitlines():
@@ -471,8 +481,11 @@ def tcp_stats(snmp=None, sockstat=None, sockstat6=None):
         if head in ('TCP6', 'UDP6'):
             pairs = dict(zip(v[0::2], v[1::2]))
             if 'inuse' in pairs:
-                key = head[:-1].lower() + 'Inuse'
-                out[key] = out.get(key, 0) + int(pairs['inuse'])
+                try:
+                    key = head[:-1].lower() + 'Inuse'
+                    out[key] = out.get(key, 0) + int(pairs['inuse'])
+                except ValueError:
+                    continue
     return out
 
 
@@ -493,9 +506,17 @@ def ping_collect(proc):
         return True, None
     if proc.poll() is None:
         return False, None
-    out = proc.stdout.read() if proc.stdout else ''
-    m = re.search(r'time[=<]([\d.]+)', out)
-    return True, float(m.group(1)) if m and proc.returncode == 0 else -1
+    try:
+        out = proc.stdout.read() if proc.stdout else ''
+        proc.wait()
+        m = re.search(r'time[=<]([\d.]+)', out)
+        return True, float(m.group(1)) if m and proc.returncode == 0 else -1
+    finally:
+        if proc.stdout:
+            try:
+                proc.stdout.close()
+            except OSError:
+                pass
 
 
 def summarize(samples):
@@ -509,7 +530,18 @@ def summarize(samples):
 def clients():
     try:
         value = json.loads(run(['hyprctl', 'clients', '-j']))
-        return [c for c in value if isinstance(c, dict) and isinstance(c.get('pid'), int) and re.fullmatch(r'0x[0-9a-fA-F]+', str(c.get('address', '')))]
+        if not isinstance(value, list):
+            return []
+        result = []
+        for c in value:
+            if not isinstance(c, dict) or type(c.get('pid')) is not int or c['pid'] <= 0:
+                continue
+            if not re.fullmatch(r'0x[0-9a-fA-F]+', str(c.get('address', ''))):
+                continue
+            if not isinstance(c.get('workspace'), dict):
+                c = dict(c, workspace={})
+            result.append(c)
+        return result
     except (ValueError, TypeError):
         return []
 
@@ -534,39 +566,82 @@ def window_for(pid, procs, windows):
     return None
 
 
-def target_for(p, procs, wins):
+def owned_socket(path):
+    # Herdr/TMUX socket paths come from the target process's own environment,
+    # so they are attacker-influenced. Only a path that is currently a socket
+    # owned by this user is usable; anything else degrades to plain window
+    # focus rather than failing the click.
+    try:
+        info = os.stat(path)
+    except (OSError, ValueError, TypeError):
+        return ''
+    if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+        return ''
+    return path
+
+
+def related(a, b, procs):
+    # A window title is attacker-reproducible: any same-user client can set
+    # its title to match. A focus target the process tree cannot relate to
+    # the target process is title-only evidence. Either direction counts, so
+    # a terminal emulator above the shell and a helper below it both bind.
+    for start, goal in ((a, b), (b, a)):
+        seen = set()
+        pid = start
+        while isinstance(pid, int) and pid > 1 and pid not in seen:
+            if pid == goal:
+                return True
+            seen.add(pid)
+            pid = procs.get(pid, {}).get('ppid', 0)
+    return False
+
+
+def target_for(p, procs, wins, query=None):
+    query = run if query is None else query
     windows = {c['pid']: c for c in wins}
     w = window_for(p['pid'], procs, windows)
     env = environment(p['pid'])
     host = {}
+    # Boomux terminal titles carry an exact shell id. Focusing that existing
+    # window needs no launcher and cannot create or terminate a session.
+    # Titles alone do not bind a window to a shell -- any same-user client
+    # can set its title -- so a candidate whose window process the tree
+    # relates to the target wins over one that merely matches the title. The
+    # title-only fallback stays for multiplexer layouts where the window and
+    # the shell share no ancestry, where no better binding is available.
     shell = env.get('BOOMUX_SHELL_ID', '')
-    if shell:
+    if shell and re.fullmatch(r'\S{1,64}', shell):
         match = [c for c in wins if str(c.get('title', '')).startswith('boomux:shell:') and str(c.get('title', '')).split(' ')[0].endswith(':' + shell)]
         if match:
-            w = match[0]
+            kin = [c for c in match if isinstance(c.get('pid'), int) and related(p['pid'], c['pid'], procs)]
+            w = kin[0] if kin else match[0]
     if not shell and env.get('HERDR_ENV') == '1' and env.get('HERDR_PANE_ID'):
-        sock = env.get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock')
-        for q in procs.values():
-            if q['name'] != 'herdr':
-                continue
-            cw = window_for(q['pid'], procs, windows)
-            cs = environment(q['pid']).get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock')
-            if cw and cs == sock:
-                w = cw
-                host = {'kind': 'herdr', 'socket': sock, 'workspace': env.get('HERDR_WORKSPACE_ID', ''), 'tab': env.get('HERDR_TAB_ID', ''), 'pane': env['HERDR_PANE_ID']}
-                break
-    if not shell and not host and env.get('TMUX') and re.fullmatch(r'%\d+', env.get('TMUX_PANE', '')):
-        sock = env['TMUX'].rsplit(',', 2)[0]
-        pane = env['TMUX_PANE']
-        session = run(['tmux', '-S', sock, 'display-message', '-p', '-t', pane, '#{session_id}']).strip()
-        for line in run(['tmux', '-S', sock, 'list-clients', '-F', '#{client_pid}\t#{session_id}\t#{client_name}']).splitlines():
-            parts = line.split('\t')
-            if len(parts) == 3 and parts[0].isdigit() and parts[1] == session:
-                cw = window_for(int(parts[0]), procs, windows)
-                if cw:
+        sock = owned_socket(env.get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock'))
+        if sock:
+            for q in procs.values():
+                if q['name'] != 'herdr':
+                    continue
+                cw = window_for(q['pid'], procs, windows)
+                ce = environment(q['pid'])
+                cs = ce.get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock')
+                if cw and cs == sock:
                     w = cw
-                    host = {'kind': 'tmux', 'socket': sock, 'pane': pane, 'client': parts[2]}
+                    host = {'kind': 'herdr', 'socket': sock, 'workspace': env.get('HERDR_WORKSPACE_ID', ''), 'tab': env.get('HERDR_TAB_ID', ''), 'pane': env['HERDR_PANE_ID']}
                     break
+    if not shell and not host and env.get('TMUX') and re.fullmatch(r'%\d+', env.get('TMUX_PANE', '')):
+        sock = owned_socket(env['TMUX'].rsplit(',', 2)[0])
+        if sock:
+            pane = env['TMUX_PANE']
+            # Attach only to a client already displaying this pane's session.
+            session = query(['tmux', '-S', sock, 'display-message', '-p', '-t', pane, '#{session_id}']).strip()
+            for line in (query(['tmux', '-S', sock, 'list-clients', '-F', '#{client_pid}\t#{session_id}\t#{client_name}']) if session else '').splitlines():
+                parts = line.split('\t')
+                if len(parts) == 3 and parts[0].isdigit() and parts[1] == session:
+                    cw = window_for(int(parts[0]), procs, windows)
+                    if cw:
+                        w = cw
+                        host = {'kind': 'tmux', 'socket': sock, 'pane': pane, 'client': parts[2]}
+                        break
     return {'address': w['address'], 'title': str(w.get('title', ''))[:100], 'workspace': str(w.get('workspace', {}).get('name', '')), 'host': host} if w else {}
 
 
@@ -580,6 +655,10 @@ def focus(pid, start):
     if not target:
         raise RuntimeError('No existing window or attached session for this process.')
     host = target.get('host', {})
+    # The socket was valid when the scan read it; re-check at use. A stale
+    # or replaced path degrades to plain window focus, not a failed click.
+    if host.get('socket') and not owned_socket(host['socket']):
+        host = {}
     if host.get('kind') == 'herdr':
         for kind, pattern in [('workspace', r'w[\w-]{1,32}'), ('tab', r'w[\w-]{1,32}:t[\w-]{1,32}'), ('pane', r'w[\w-]{1,32}:p[\w-]{1,32}')]:
             value = host.get(kind, '')
@@ -621,25 +700,29 @@ def focus(pid, start):
 
 def db_open():
     db = sqlite3.connect(STATE / 'history.sqlite3', timeout=5)
-    db.execute('PRAGMA journal_mode=WAL')
-    db.execute('CREATE TABLE IF NOT EXISTS samples (ts REAL PRIMARY KEY, rx REAL, tx REAL, latency REAL, signal REAL, iface TEXT, boot TEXT, span REAL)')
-    # Databases written before spans were recorded gain the column; their rows
-    # keep a NULL span and fall back to the nominal interval.
-    if 'span' not in {row[1] for row in db.execute('PRAGMA table_info(samples)')}:
-        db.execute('ALTER TABLE samples ADD COLUMN span REAL')
-    # Bytes moved per hour per interface. Samples are pruned after a week, so
-    # months and years of usage can only come from a rollup that outlives them;
-    # at one row per hour per interface a decade is a few hundred kilobytes.
-    fresh = db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='usage'").fetchone()[0] == 0
-    db.execute('CREATE TABLE IF NOT EXISTS usage (hour INTEGER, iface TEXT, rx REAL, tx REAL, secs REAL, PRIMARY KEY (hour, iface))')
-    if fresh:
-        # An existing week of samples is worth carrying over rather than
-        # starting the usage tab at zero on the release that adds it.
-        db.execute('INSERT INTO usage (hour, iface, rx, tx, secs) '
-                   'SELECT CAST(ts/3600 AS INTEGER)*3600, iface, SUM(rx*COALESCE(span,?)), SUM(tx*COALESCE(span,?)), SUM(COALESCE(span,?)) '
-                   'FROM samples GROUP BY 1, 2', (HISTORY_INTERVAL, HISTORY_INTERVAL, HISTORY_INTERVAL))
-        db.commit()
-    return db
+    try:
+        db.execute('PRAGMA journal_mode=WAL')
+        db.execute('CREATE TABLE IF NOT EXISTS samples (ts REAL PRIMARY KEY, rx REAL, tx REAL, latency REAL, signal REAL, iface TEXT, boot TEXT, span REAL)')
+        # Databases written before spans were recorded gain the column; their rows
+        # keep a NULL span and fall back to the nominal interval.
+        if 'span' not in {row[1] for row in db.execute('PRAGMA table_info(samples)')}:
+            db.execute('ALTER TABLE samples ADD COLUMN span REAL')
+        # Bytes moved per hour per interface. Samples are pruned after a week, so
+        # months and years of usage can only come from a rollup that outlives them;
+        # at one row per hour per interface a decade is a few hundred kilobytes.
+        fresh = db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='usage'").fetchone()[0] == 0
+        db.execute('CREATE TABLE IF NOT EXISTS usage (hour INTEGER, iface TEXT, rx REAL, tx REAL, secs REAL, PRIMARY KEY (hour, iface))')
+        if fresh:
+            # An existing week of samples is worth carrying over rather than
+            # starting the usage tab at zero on the release that adds it.
+            db.execute('INSERT INTO usage (hour, iface, rx, tx, secs) '
+                       'SELECT CAST(ts/3600 AS INTEGER)*3600, iface, SUM(rx*COALESCE(span,?)), SUM(tx*COALESCE(span,?)), SUM(COALESCE(span,?)) '
+                       'FROM samples GROUP BY 1, 2', (HISTORY_INTERVAL, HISTORY_INTERVAL, HISTORY_INTERVAL))
+            db.commit()
+        return db
+    except BaseException:
+        db.close()
+        raise
 
 
 def record(db, ts, rx, tx, latency, signal, iface, span=HISTORY_INTERVAL):
@@ -732,22 +815,148 @@ def usage(db, seconds, now=None):
             'ifaces': ifaces[:6]}
 
 
+# State files fall into two classes, and a symlink means a different thing to
+# each. Replaced files are written with tempfile.mkstemp and Path.replace():
+# rename(2) does not follow a symlink at the destination, so it replaces the
+# link itself rather than writing through it. Refusing there would cost a
+# deliberate dotfiles arrangement its setup and buy nothing atomic() has not
+# already bought. snapshot.tmp is the fixed name an older release wrote to; it
+# is listed so an existing one is repaired rather than left at its old mode.
+REPLACED_STATE = ('snapshot.json', 'history.json', 'usage.json', 'snapshot.tmp')
+# Opened in place, by path, so a symlink is genuinely followed and written
+# through: sqlite opens the database and its sidecars, and the collector lock
+# is opened directly.
+IN_PLACE_STATE = ('history.sqlite3', 'history.sqlite3-wal', 'history.sqlite3-shm',
+                  'history.sqlite3-journal', 'collector.lock')
+
+
+def inspect_state(directory, name):
+    """Vet one state file without following a link, repairing its mode.
+
+    Returns None when the file is absent or fine, and a reason otherwise. The
+    caller decides what an unsafe file costs, because that differs by file.
+    """
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                     dir_fd=directory)
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        # O_NOFOLLOW reports a symlink as ELOOP. Say what it is rather than
+        # letting a bare errno reach the reader.
+        return 'is a symlink' if e.errno == errno.ELOOP else str(e)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            return 'is not a regular file'
+        if info.st_uid != os.getuid():
+            return 'is owned by another user'
+        if info.st_nlink != 1:
+            return 'has more than one hard link'
+        os.fchmod(fd, 0o600)
+        return None
+    finally:
+        os.close(fd)
+
+
+def prepare_state(strict=True):
+    """Make the state directory private and vet the files in it.
+
+    Returns {name: reason} for files that are not safe to write. Ownership and
+    O_NOFOLLOW on the directory itself are unconditional either way.
+
+    strict=True is the interactive path -- snapshot, focus, latency and the
+    other actions -- where a person is waiting on the answer and an unsafe
+    in-place file should stop them with a message. The daemon passes
+    strict=False and decides per file: the unit is Restart=on-failure, so
+    raising here would turn one actionable problem into an endless five-second
+    restart cycle.
+    """
+    # The README promises a 0700 directory of 0600 files. mkdir's mode applies
+    # only when it creates the directory, so an existing state directory, or a
+    # file left behind by an older release, keeps whatever mode it already had.
+    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory = os.open(STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    unsafe = {}
+    try:
+        if os.fstat(directory).st_uid != os.getuid():
+            raise RuntimeError('Net Pulse state directory is not owned by this user.')
+        os.fchmod(directory, 0o700)
+        for name in REPLACED_STATE:
+            reason = inspect_state(directory, name)
+            if reason:
+                unsafe[name] = reason
+        for name in IN_PLACE_STATE:
+            reason = inspect_state(directory, name)
+            if reason:
+                if strict:
+                    raise RuntimeError('Unsafe Net Pulse state file: ' + name + ' ' + reason)
+                unsafe[name] = reason
+    finally:
+        os.close(directory)
+    return unsafe
+
+
 def atomic(name, value):
+    # A fixed .tmp name inherits whatever mode a previous interrupted write
+    # left on it; mkstemp always creates a fresh owner-only file.
     path = STATE / name
-    tmp = path.with_suffix('.tmp')
-    tmp.write_text(json.dumps(value, separators=(',', ':'), ensure_ascii=True))
-    tmp.replace(path)
+    payload = json.dumps(value, separators=(',', ':'), ensure_ascii=True, allow_nan=False)
+    fd, filename = tempfile.mkstemp(prefix='.' + name + '.', suffix='.tmp', dir=STATE)
+    tmp = Path(filename)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        tmp.replace(path)
+        try:
+            dir_fd = os.open(STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 # ----------------------------------------------------------------- daemon
 
 def daemon():
+    # prepare_state() still refuses an unsafe state directory outright --
+    # ownership and O_NOFOLLOW on the directory itself are unconditional even
+    # when strict=False. That refusal must not escape as an exception: the
+    # unit is Restart=on-failure, so exiting nonzero here turns one actionable
+    # problem (a symlinked or foreign-owned state directory) into an endless
+    # five-second restart cycle. Report it and stop quietly instead, the same
+    # way an unsafe collector.lock below does.
+    try:
+        unsafe = prepare_state(strict=False)
+    except (OSError, RuntimeError) as e:
+        print(f'Net Pulse: not starting, unsafe state directory: {e}', flush=True)
+        return
+    # collector.lock is opened by path and is the first thing this function
+    # touches after the vetting above, so an unsafe one cannot be worked
+    # around. Return rather than raise: the unit is Restart=on-failure, so
+    # exiting zero leaves one clear message in the journal instead of an
+    # endless five-second restart cycle.
+    if 'collector.lock' in unsafe:
+        print('Net Pulse: not starting, collector.lock ' + unsafe['collector.lock'], flush=True)
+        return
+    # An unsafe database costs history, not the whole recorder. This is the
+    # isolation the snapshot loop already applies to a corrupt database: keep
+    # publishing current network state, and say in the dashboard why history
+    # stopped.
+    blocked = sorted(n for n in unsafe if n.startswith('history.sqlite3'))
+    warned = sorted(n for n in unsafe if not n.startswith('history.sqlite3'))
     with (STATE / 'collector.lock').open('w') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return
-        db = db_open()
+        db = None
         cache = {'devices': {}, 'general': {}, 'addresses': {}, 'connections': {}, 'networks': [], 'band': {}, 'dns': [], 'provider': '', 'routes': [], 'saved': [],
                  'talkers': {'rows': [], 'total': 0, 'anonymous': 0, 'listening': 0}}
         jobs = {'medium': (6, medium_jobs), 'slow': (15, slow_jobs), 'talkers': (9, lambda c: c.update(talkers=talkers()))}
@@ -757,58 +966,84 @@ def daemon():
         samples = {'gateway': [], 'internet': []}
         acc = {'rx': [], 'tx': [], 'latency': [], 'signal': []}
         last_history = time.monotonic()
-        while True:
-            start = time.monotonic()
-            try:
-                # Sample the counters first and timestamp that moment. Reading
-                # them after the slow jobs charged their duration to the wrong
-                # interval and made rates leap and collapse.
-                sampled = time.monotonic()
-                now_counters = netdev()
-                tcp_now = tcp_stats()
-                speed = rates(counters, now_counters, sampled - counted_at if counters else 0)
-                counters, counted_at = now_counters, sampled
-                tcp_rates = {k: max(0, tcp_now.get(k, 0) - tcp_prev.get(k, 0)) / (sampled - tcp_at) for k in ('RetransSegs', 'ActiveOpens', 'PassiveOpens', 'InSegs', 'OutSegs')} if tcp_prev and sampled > tcp_at else {}
-                tcp_prev, tcp_at = tcp_now, sampled
-                for name, (interval, fn) in jobs.items():
-                    if start >= due[name]:
-                        try:
-                            fn(cache)
-                        except (OSError, ValueError) as e:
-                            print(f'Net Pulse: {name}: {type(e).__name__}: {e}', flush=True)
-                        due[name] = start + interval
-                route = default_route()
-                iface = route.get('iface', '')
-                for key, host in (('gateway', route.get('gateway', '')), ('internet', route.get('probe', PROBE) if iface else '')):
-                    done, value = ping_collect(pings[key])
-                    if done:
-                        if pings[key] is not None:
-                            samples[key] = (samples[key] + [value])[-PING_WINDOW:]
-                        pings[key] = ping_start(host) if host else None
-                        if not host:
-                            samples[key] = []
-                m = snapshot(cache, counters, speed, route, samples, tcp_now, tcp_rates)
-                if iface:
-                    acc['rx'].append(m['rates']['rx'])
-                    acc['tx'].append(m['rates']['tx'])
-                    if m['ping']['internet'] is not None:
-                        acc['latency'].append(m['ping']['internet'] if m['ping']['internet'] >= 0 else None)
-                    if m['wifi'].get('quality') is not None:
-                        acc['signal'].append(m['wifi']['quality'])
-                if start - last_history >= HISTORY_INTERVAL:
-                    span = min(4 * HISTORY_INTERVAL, max(1.0, start - last_history))
-                    if iface and acc['rx']:
-                        lat = [v for v in acc['latency'] if v is not None]
-                        record(db, m['ts'], sum(acc['rx']) / len(acc['rx']), sum(acc['tx']) / len(acc['tx']), sum(lat) / len(lat) if lat else None,
-                               sum(acc['signal']) / len(acc['signal']) if acc['signal'] else None, iface, span)
-                    atomic('history.json', {str(s): history(db, s, m['ts']) for s in (3600, 86400, 604800)})
-                    atomic('usage.json', {str(s): usage(db, s, m['ts']) for s in USAGE_RANGES})
-                    acc = {'rx': [], 'tx': [], 'latency': [], 'signal': []}
-                    last_history = start
-                atomic('snapshot.json', m)
-            except (OSError, sqlite3.Error, RuntimeError, ValueError) as e:
-                print(f'Net Pulse: {type(e).__name__}: {e}', flush=True)
-            time.sleep(max(0.2, 2 - (time.monotonic() - start)))
+        errors = {}
+        if blocked:
+            errors['history'] = '; '.join(n + ' ' + unsafe[n] for n in blocked)
+            print('Net Pulse history: ' + errors['history'], flush=True)
+        if warned:
+            # Replaced by rename(2), so nothing is written through the link.
+            # Still worth surfacing: the reader chose that layout or did not.
+            errors['state'] = '; '.join(n + ' ' + unsafe[n] for n in warned)
+            print('Net Pulse state: ' + errors['state'], flush=True)
+        try:
+            while True:
+                start = time.monotonic()
+                try:
+                    # Sample the counters first and timestamp that moment. Reading
+                    # them after the slow jobs charged their duration to the wrong
+                    # interval and made rates leap and collapse.
+                    sampled = time.monotonic()
+                    now_counters = netdev()
+                    tcp_now = tcp_stats()
+                    speed = rates(counters, now_counters, sampled - counted_at if counters else 0)
+                    counters, counted_at = now_counters, sampled
+                    tcp_rates = {k: max(0, tcp_now.get(k, 0) - tcp_prev.get(k, 0)) / (sampled - tcp_at) for k in ('RetransSegs', 'ActiveOpens', 'PassiveOpens', 'InSegs', 'OutSegs')} if tcp_prev and sampled > tcp_at else {}
+                    tcp_prev, tcp_at = tcp_now, sampled
+                    for name, (interval, fn) in jobs.items():
+                        if start >= due[name]:
+                            try:
+                                fn(cache)
+                            except (OSError, ValueError) as e:
+                                print(f'Net Pulse: {name}: {type(e).__name__}: {e}', flush=True)
+                            due[name] = start + interval
+                    route = default_route()
+                    iface = route.get('iface', '')
+                    for key, host in (('gateway', route.get('gateway', '')), ('internet', route.get('probe', PROBE) if iface else '')):
+                        done, value = ping_collect(pings[key])
+                        if done:
+                            if pings[key] is not None:
+                                samples[key] = (samples[key] + [value])[-PING_WINDOW:]
+                            pings[key] = ping_start(host) if host else None
+                            if not host:
+                                samples[key] = []
+                    m = snapshot(cache, counters, speed, route, samples, tcp_now, tcp_rates)
+                    if iface:
+                        acc['rx'].append(m['rates']['rx'])
+                        acc['tx'].append(m['rates']['tx'])
+                        if m['ping']['internet'] is not None:
+                            acc['latency'].append(m['ping']['internet'] if m['ping']['internet'] >= 0 else None)
+                        if m['wifi'].get('quality') is not None:
+                            acc['signal'].append(m['wifi']['quality'])
+                    if start - last_history >= HISTORY_INTERVAL:
+                        span = min(4 * HISTORY_INTERVAL, max(1.0, start - last_history))
+                        if not blocked:
+                            try:
+                                if db is None:
+                                    db = db_open()
+                                if iface and acc['rx']:
+                                    lat = [v for v in acc['latency'] if v is not None]
+                                    record(db, m['ts'], sum(acc['rx']) / len(acc['rx']), sum(acc['tx']) / len(acc['tx']), sum(lat) / len(lat) if lat else None,
+                                           sum(acc['signal']) / len(acc['signal']) if acc['signal'] else None, iface, span)
+                                atomic('history.json', {str(s): history(db, s, m['ts']) for s in (3600, 86400, 604800)})
+                                atomic('usage.json', {str(s): usage(db, s, m['ts']) for s in USAGE_RANGES})
+                                errors.pop('history', None)
+                            except (OSError, sqlite3.Error, RuntimeError, ValueError) as e:
+                                errors['history'] = str(e)
+                                print(f'Net Pulse history: {type(e).__name__}: {e}', flush=True)
+                                if db is not None:
+                                    db.close()
+                                    db = None
+                        acc = {'rx': [], 'tx': [], 'latency': [], 'signal': []}
+                        last_history = start
+                    if errors:
+                        m['collectorErrors'] = dict(errors)
+                    atomic('snapshot.json', m)
+                except (OSError, sqlite3.Error, RuntimeError, ValueError) as e:
+                    print(f'Net Pulse: {type(e).__name__}: {e}', flush=True)
+                time.sleep(max(0.2, 2 - (time.monotonic() - start)))
+        finally:
+            if db is not None:
+                db.close()
 
 
 def medium_jobs(cache):
@@ -828,6 +1063,12 @@ def slow_jobs(cache):
     cache['routes'] = routes()
 
 
+# One-shot `snapshot` runs with a cold counter cache: main() passes a single
+# netdev() reading with an empty speed map, so interface rates read zero and
+# the ping sample windows are empty. Only the daemon, which re-samples the
+# counters every loop and accumulates ping windows, reports warmed rates and
+# latency. A zero rate from a one-shot snapshot means "no previous sample",
+# not "the link is idle".
 def snapshot(cache, counters, speed, route, samples, tcp, tcp_rates):
     ts = time.time()
     iface = route.get('iface', '')
@@ -879,18 +1120,38 @@ def latency_burst(hosts):
     procs = []
     for host in hosts:
         if host and re.fullmatch(r'[0-9a-fA-F:.]{3,45}', host):
-            procs.append((host, subprocess.Popen(['ping', '-n', '-c', '10', '-i', '0.2', '-W', '1', host], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)))
+            try:
+                procs.append((host, subprocess.Popen(['ping', '-n', '-c', '10', '-i', '0.2', '-W', '1', host], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)))
+            except OSError:
+                continue
     results = {}
     for host, proc in procs:
+        out = ''
         try:
-            out, _ = proc.communicate(timeout=20)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            out = ''
-        rtt = re.search(r'= ([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+) ms', out)
-        loss = re.search(r'(\d+)% packet loss', out)
-        results[host] = {'min': float(rtt.group(1)), 'avg': float(rtt.group(2)), 'max': float(rtt.group(3)), 'jitter': float(rtt.group(4))} if rtt else {}
-        results[host]['loss'] = int(loss.group(1)) if loss else 100
+            try:
+                out, _ = proc.communicate(timeout=20)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    out, _ = proc.communicate(timeout=5)
+                except (OSError, ValueError, subprocess.TimeoutExpired):
+                    out = ''
+            rtt = re.search(r'= ([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+) ms', out)
+            loss = re.search(r'(\d+)% packet loss', out)
+            results[host] = {'min': float(rtt.group(1)), 'avg': float(rtt.group(2)), 'max': float(rtt.group(3)), 'jitter': float(rtt.group(4))} if rtt else {}
+            results[host]['loss'] = int(loss.group(1)) if loss else 100
+        except (OSError, ValueError) as e:
+            # One host failing (parse error, I/O error) must not kill the
+            # other host's measurement.
+            results.setdefault(host, {'loss': 100})
+            print(f'Net Pulse: latency {host}: {type(e).__name__}: {e}', flush=True)
+        finally:
+            for stream in (proc.stdout, proc.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
     return results
 
 
@@ -972,11 +1233,11 @@ def main():
     parser.add_argument('args', nargs='*')
     a = parser.parse_args()
     os.umask(0o077)
-    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
         if a.action == 'daemon':
             daemon()
             return
+        prepare_state()
         arg = a.args + ['', '']
         value = {'snapshot': lambda: snapshot({'devices': nm_devices(), 'general': nm_general(), 'addresses': addresses(), 'connections': {}, 'networks': wifi_list(), 'band': band_status(), 'dns': resolve_status(), 'provider': dns_provider(), 'routes': routes(), 'talkers': talkers()}, netdev(), {}, default_route(), {'gateway': [], 'internet': []}, tcp_stats(), {}),
                  'focus': lambda: focus(int(arg[0]), arg[1]), 'latency': action_latency, 'publicip': action_public_ip, 'dns': lambda: action_dns(arg[0]),

@@ -20,18 +20,22 @@ Item {
     property real phase: 0
     property real level: busy / 100
     property var shown: []
+    // Audit #19: when the popup is closed the bar chip only needs a slow
+    // heartbeat (2Hz); the host passes its opened state down. Defaults true
+    // so standalone/test instantiation stays at full speed.
+    property bool panelOpen: true
     implicitWidth: compact ? 28 : 160
     implicitHeight: compact ? 25 : 160
     // One phase revolution every 5.8s, advanced by the repaint tick itself.
     readonly property real phaseStep: tick.interval / 5800
-    // Every repaint is coalesced onto this single 10Hz tick, and nothing is
-    // painted while the die is off screen. An infinite NumberAnimation on
-    // phase drove the canvas at display refresh rate instead, and the level
-    // and tint Behaviors kept doing the same through every transition even
-    // when animation was switched off.
+    // Every repaint is coalesced onto this single tick (10Hz open, 2Hz
+    // closed), and nothing is painted while the die is off screen. An
+    // infinite NumberAnimation on phase drove the canvas at display refresh
+    // rate instead, and the level and tint Behaviors kept doing the same
+    // through every transition even when animation was switched off.
     Timer {
         id: tick
-        interval: 100; repeat: true
+        interval: root.panelOpen ? 100 : 500; repeat: true
         running: root.animate && root.visible
         onTriggered: { root.phase = (root.phase + root.phaseStep) % 1; canvas.requestPaint() }
     }
@@ -52,6 +56,7 @@ Item {
             var c = getContext('2d'), w = width, h = height
             c.reset(); c.clearRect(0,0,w,h)
             var cx=w/2, cy=h/2, size=Math.min(w,h), body=size*(root.compact?0.58:0.47)
+            if (size <= 0 || body <= 0) return
             var x=cx-body/2, y=cy-body/2, t=root.phase*Math.PI*2
             var aura=c.createRadialGradient(cx,cy,body*0.1,cx,cy,size*0.5)
             aura.addColorStop(0,Qt.alpha(root.tint,0.30+0.25*root.level)); aura.addColorStop(0.6,Qt.alpha(root.tint,0.20+0.07*Math.sin(t))); aura.addColorStop(1,'transparent')

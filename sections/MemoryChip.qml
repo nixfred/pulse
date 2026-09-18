@@ -12,15 +12,18 @@ Item {
     property color body: '#0b141b'
     property real phase: 0
     property real level: available / 100
+    // Audit #19: slow heartbeat when the popup is closed; host passes opened.
+    property bool panelOpen: true
     implicitWidth: compact ? 28 : 160
     implicitHeight: compact ? 25 : 160
     // One phase revolution every 5.8s, advanced by the repaint tick itself.
     readonly property real phaseStep: tick.interval / 5800
-    // Painting is coalesced onto one 10Hz tick and stops while invisible.
-    // Do not drive phase from an animation: it repaints at display rate.
+    // Painting is coalesced onto one tick (10Hz open, 2Hz closed) and stops
+    // while invisible. Do not drive phase from an animation: it repaints at
+    // display rate.
     Timer {
         id: tick
-        interval: 100; repeat: true
+        interval: root.panelOpen ? 100 : 500; repeat: true
         running: root.animate && root.visible
         onTriggered: { root.phase = (root.phase + root.phaseStep) % 1; canvas.requestPaint() }
     }
@@ -38,6 +41,7 @@ Item {
             var c = getContext('2d'), w = width, h = height
             c.reset(); c.clearRect(0,0,w,h)
             var cx=w/2, cy=h/2, size=Math.min(w,h), body=size*(root.compact?0.58:0.47)
+            if (size <= 0 || body <= 0) return
             var x=cx-body/2, y=cy-body/2, t=root.phase*Math.PI*2
             var aura=c.createRadialGradient(cx,cy,body*0.1,cx,cy,size*0.5)
             aura.addColorStop(0,Qt.alpha(root.tint,0.45)); aura.addColorStop(0.6,Qt.alpha(root.tint,0.20+0.07*Math.sin(t))); aura.addColorStop(1,'transparent')

@@ -54,6 +54,21 @@ here, and is tagged `vX.Y.Z`: a fix bumps the patch, a new capability the minor.
   and `status` reports `barKeys` plus the `barVisible` map. `pin` keeps its
   single-chip behaviour for existing scripts and entries.
 
+### Hardened
+- **The collectors share one safety standard.** CPU, Net and Disk now write
+  snapshots the hardened way (fresh owner-only temp file, no `NaN`, fsync),
+  refuse an unsafe `collector.lock` instead of truncating through it, ignore a
+  relative `XDG_STATE_HOME`, open the history database lazily so a corrupt DB
+  costs history rather than the recorder, and validate Herdr/TMUX sockets plus
+  process ancestry before focusing a window. RAM gains a `MemAvailable`
+  estimate fallback instead of reporting offline.
+- **Smaller robustness fixes.** C-locale subprocess parsing, per-line `/proc`
+  guards, Net ping child reaping with `tcp_stats` guards, Disk exact-class
+  device skipping with local-FUSE treatment and a SMART time budget, installer
+  `umask` with a safe rollback and `python3`-on-PATH units, atomic merge-tool
+  writes, and IPC input validation (`show`, `showTab`, `barShow`, `panelWidth`)
+  with `safeParse` status reporting on the panel side.
+
 ## 1.2.0 - 2026-09-15
 
 ### Performance

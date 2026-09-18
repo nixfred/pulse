@@ -70,6 +70,8 @@ Item {
                             font.family: Style.font.family
                             font.pixelSize: 26
                             font.bold: true
+                            width: 176
+                            elide: Text.ElideRight
                             textFormat: Text.PlainText
                         }
                         Row {
@@ -91,6 +93,8 @@ Item {
                                 color: root.inkDim
                                 font.pixelSize: 9
                                 font.bold: true
+                                width: 110
+                                elide: Text.ElideRight
                                 textFormat: Text.PlainText
                             }
                         }
@@ -100,6 +104,8 @@ Item {
                             text: cardRect.modelData.constraintLabel + ' · ' + cardRect.modelData.constraintValue
                             color: root.inkDim
                             font.pixelSize: 9
+                            width: 176
+                            elide: Text.ElideRight
                             textFormat: Text.PlainText
                         }
                     }
