@@ -26,10 +26,13 @@ CPU, memory, storage, network and GPU — five dashboards, one widget, zero gues
 
 A system monitor that shows you five numbers is asking you to do the ranking.
 
-Pulse does the ranking. Every reading across all five domains is scored on one
-shared severity scale, and the bar icon becomes whichever domain is currently
-worst — the chip changes shape, the colour changes with it, and the caption
-says what it is and why:
+Pulse shows every checked module on the bar, side by side — one chip per
+domain, each in its own shape, colour and readout grammar. Uncheck a module and
+its chip leaves the bar; the checked set is saved, so it survives restarts.
+
+Every reading across all five domains is still scored on one shared severity
+scale, and the worst domain keeps its marker — in the tooltip and the verdict
+pill — so you always know which one is the problem and why:
 
 ```
 ▨  1.5 GiB          ▨  89°C              ▨  137.3 GiB
@@ -40,7 +43,8 @@ says what it is and why:
 <img src="docs/img/bar-icon.png" width="300" alt="The Pulse bar icon showing a RAM chip, 2.1 GiB, and the caption RAM · FULL STALLS">
 </div>
 
-You never choose what to watch. It tells you.
+You choose what to watch by checking it. The ranking tells you which of the
+checked modules needs attention.
 
 And when you want the detail, all four original dashboards are still there,
 whole, behind their own names.
@@ -82,15 +86,17 @@ the top row of this page.
 
 ## Every readout, priced against live values
 
-Right-click the icon. Auto is the default. Below it, every readout of every
-domain, each showing what it would read right now — so you pin against a real
-number rather than a name.
+Right-click the bar entry. The top section is checkboxes — one per module, each
+showing what it would read right now — so you decide against live values rather
+than names. Below that, every readout of every domain, each showing what it
+would read right now — so you pin against a real number rather than a name.
 
 <div align="center">
 <img src="docs/img/chooser.png" width="820" alt="Right-click chooser: Auto plus all nineteen readouts across the four domains, each showing its current value">
 </div>
 
-Pinning stops the icon moving. Auto puts it back.
+Unchecking hides that module's chip. Pinning a readout shows a single chip that
+stays put. Auto returns to the checked set.
 
 ---
 
@@ -129,7 +135,9 @@ that only exists once they share a bar entry: what the icon follows.
 
 Settings live in the widget's own `shell.json` entry, namespaced per domain
 (`cpu.displayMode`, `ram.groupByApp`, `disk.mountpoint`, `barSource`), so the
-four no longer compete for the same keys.
+four no longer compete for the same keys. The checked set lives there too, as
+`bar.showCpu`, `bar.showRam`, `bar.showDisk` and `bar.showNet` — the same flags
+both the chooser and the Settings page edit.
 
 ---
 
@@ -187,9 +195,11 @@ omarchy-shell nixfred.pulse open
 omarchy-shell nixfred.pulse show net              # jump to a domain
 omarchy-shell nixfred.pulse showTab net 1         # domain, then sub-tab
 omarchy-shell nixfred.pulse constraints           # the ranking
-omarchy-shell nixfred.pulse modes                 # the readout chooser
-omarchy-shell nixfred.pulse pin auto              # icon follows the constraint
-omarchy-shell nixfred.pulse pin cpu               # or pin it
+omarchy-shell nixfred.pulse modes                 # the module chooser
+omarchy-shell nixfred.pulse pin auto              # back to the checked set
+omarchy-shell nixfred.pulse pin cpu               # or pin one chip
+omarchy-shell nixfred.pulse barShow disk false    # uncheck one module
+omarchy-shell nixfred.pulse showAllBars           # check all four
 omarchy-shell nixfred.pulse display cpu 2         # that domain's readout
 omarchy-shell nixfred.pulse historyRange ram 86400
 omarchy-shell nixfred.pulse status                # all five, as JSON

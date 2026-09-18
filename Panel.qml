@@ -81,15 +81,73 @@ Panel {
         return pick
     }
 
-    // What the single bar icon shows. 'auto' is the default and the point of
-    // the merge: the icon becomes whichever domain is currently the biggest
-    // constraint, and says so. Anything else is a pin the user chose from the
-    // right-click chooser, and it stays put.
+    // What the bar entry shows. 'auto' is the default: every checked module
+    // gets its own chip, side by side in the one widget. Anything else is a
+    // legacy pin the user chose from the right-click chooser — one domain,
+    // staying put — kept so existing shell.json entries keep working.
+    // Visibility is stored per domain as bar.showCpu / bar.showRam /
+    // bar.showDisk / bar.showNet (default true), so the checked set survives
+    // restarts via the widget's own shell.json entry.
     readonly property string barSource: {
         var stored = String(root.setting('barSource', 'auto'))
         return stored === 'auto' || root.domainKeys.indexOf(stored) >= 0 ? stored : 'auto'
     }
     readonly property bool barAuto: root.barSource === 'auto'
+    function barShowKey(key) {
+        return 'bar.show' + String(key).charAt(0).toUpperCase() + String(key).slice(1)
+    }
+    function isBarShown(key) {
+        return root.setting(root.barShowKey(key), true) !== false
+    }
+    // The checked set, in domain order. A pin ignores it (legacy single);
+    // auto shows exactly it. Never empty: hiding the last module is refused
+    // in setBarShown, and a stored all-off entry falls back to the worst
+    // domain rather than reserving zero width on the bar.
+    readonly property var barKeys: {
+        if (!root.barAuto) return [root.barSource]
+        var visible = root.domainKeys.filter(function (k) { return root.isBarShown(k) })
+        if (visible.length > 0) return visible
+        if (root.autoDomain) return [root.autoDomain.prefix]
+        if (root.worst) return [root.worst.prefix]
+        return ['cpu']
+    }
+    readonly property var barCells: {
+        var out = []
+        for (var i = 0; i < root.barKeys.length; i++) {
+            var s = root.sectionFor(root.barKeys[i])
+            if (s) out.push(s)
+        }
+        return out.length > 0 ? out : (root.autoDomain ? [root.autoDomain] : [])
+    }
+    function setBarShown(key, show) {
+        if (root.domainKeys.indexOf(key) < 0) {
+            root.actionStatus = 'No such module: ' + key
+            return false
+        }
+        var next = !!show
+        if (!next) {
+            var remaining = root.domainKeys.filter(function (k) {
+                return k !== key && root.isBarShown(k)
+            })
+            // A legacy pin shows one domain regardless of the checkboxes, so
+            // hiding there cannot empty the bar — but leaving zero checked
+            // would empty it the moment the pin is released. Refuse either way.
+            if (remaining.length === 0) {
+                root.actionStatus = 'Keep at least one module on the bar.'
+                return false
+            }
+        }
+        root.setSetting(root.barShowKey(key), next)
+        // Touching the checkboxes leaves a legacy pin: the user just
+        // described a set, so the bar should show the set.
+        if (!root.barAuto) root.setSetting('barSource', 'auto')
+        return true
+    }
+    function showAllBars() {
+        for (var i = 0; i < root.domainKeys.length; i++)
+            root.setSetting(root.barShowKey(root.domainKeys[i]), true)
+        root.setSetting('barSource', 'auto')
+    }
     // Auto follows `worst`, but not instantly. Two domains sitting a hair
     // apart would otherwise trade the icon back and forth every few seconds,
     // which reads as a fault rather than as information. The leader has to be
@@ -159,10 +217,13 @@ Panel {
     function openSection(key) { root.chooseMode = false; root.active = key; root.open() }
     function showPage(key) { root.active = key }
     function status() {
+        var visible = {}
+        for (var vi = 0; vi < root.domainKeys.length; vi++)
+            visible[root.domainKeys[vi]] = root.isBarShown(root.domainKeys[vi])
         return JSON.stringify({
             opened: root.opened, active: root.active, version: root.version,
             chooseMode: root.chooseMode, barSource: root.barSource, barKey: root.barKey,
-            barCaption: root.barCaption,
+            barCaption: root.barCaption, barKeys: root.barKeys.slice(), barVisible: visible,
             // Content geometry, so a caller can crop a screenshot to the panel
             // without guessing where it ends.
             panelWidth: panel.contentWidth, panelHeight: panel.contentHeight,
@@ -173,7 +234,7 @@ Panel {
             // What the entry reserves on the bar, and what it actually draws.
             // The first must never be smaller than the second, or the widget
             // paints over its neighbour.
-            barReserved: Math.round(button.implicitWidth), barDrawn: Math.round(barRow.implicitWidth + 12),
+            barReserved: Math.round(button.vertical ? button.implicitHeight : button.implicitWidth), barDrawn: Math.round((button.vertical ? barColumn.implicitHeight : barRow.implicitWidth) + 12),
             panelPad: panel.padding,
             cpu: cpuSection.status ? JSON.parse(cpuSection.status()) : null,
             ram: ramSection.status ? JSON.parse(ramSection.status()) : null,
@@ -207,8 +268,14 @@ Panel {
         function modes(): void { root.chooseMode = true; root.open() }
         function settings(): void { root.chooseMode = false; root.active = 'settings'; root.open() }
         function constraints(): void { root.chooseMode = false; root.active = 'constraints'; root.open() }
-        // Put the icon back on auto, or pin it, without opening the panel.
+        // Put the bar back on auto, or pin it, without opening the panel.
         function pin(page: string): void { root.pinBar(String(page || 'auto'), null) }
+        // Check or uncheck one module's bar checkbox without opening the panel.
+        // Persists to shell.json like every other setting; refuses to hide the
+        // last visible module. Accepts 'true'/'false'/1/0 as well as booleans.
+        function barShow(page: string, value: bool): void { root.setBarShown(String(page || ''), value) }
+        // Check every module and return the bar to auto.
+        function showAllBars(): void { root.showAllBars() }
         // Jump straight to one domain's dashboard — the replacement for the
         // four plugins' separate `open` calls.
         function show(page: string): void { root.openSection(String(page || 'overview')) }
@@ -233,11 +300,12 @@ Panel {
     }
 
     // ---- bar entry ---------------------------------------------------
-    // ONE icon. That is the whole point of the merge: not four chips sharing a
-    // button, but a single readout that is always showing you the thing that
-    // matters most right now. The chip itself is the constrained domain's own
-    // chip, so the shape and colour change with it, and the caption underneath
-    // names the domain and what is constraining it.
+    // One widget, one checked set of chips side by side. Auto (the default)
+    // shows every checked module; a pin shows one domain and stays put. Each
+    // cell is that domain's own chip plus its own readout, so the shape and
+    // colour change per module. The worst domain keeps the ▸ marker in the
+    // tooltip and the verdict pill, so the constraint is still named without
+    // opening anything.
     WidgetButton {
         id: button
         anchors.fill: parent
@@ -248,21 +316,26 @@ Panel {
         // Without this, a left or right bar sizes the button from the hidden
         // label — about one text line — while the content is a chip plus two
         // stacked lines, and the entry collapses.
-        fixedHeight: vertical ? barRow.implicitHeight + 12 : -1
+        fixedHeight: vertical ? barColumn.implicitHeight + 12 : -1
         tooltipText: {
             // The version leads the tooltip so the running release is one hover away,
             // read from manifest.json like everywhere else it appears.
             var name = 'Pulse' + (root.version !== '' ? ' v' + root.version : '')
-            var lines = [root.barAuto ? name + ' · following the biggest constraint'
-                                      : name + ' · pinned to ' + (root.barDomain ? root.barDomain.sectionTitle : root.barSource)]
+            var shown = root.barAuto ? root.barKeys.map(function (k) {
+                var s = root.sectionFor(k)
+                return s ? s.sectionTitle : k
+            }).join(' + ') : (root.barDomain ? root.barDomain.sectionTitle : root.barSource)
+            var lines = [root.barAuto ? name + ' · showing ' + shown
+                                      : name + ' · pinned to ' + shown]
             for (var i = 0; i < root.domains.length; i++) {
                 var d = root.domains[i]
                 if (!d) continue
-                lines.push((d === root.barDomain ? '▸ ' : '  ') + d.sectionTitle + ': '
+                var mark = (d === root.worst ? '▸' : ' ') + (root.barKeys.indexOf(d.prefix) >= 0 ? '✓' : '·')
+                lines.push(mark + ' ' + d.sectionTitle + ': '
                            + (d.stale ? 'telemetry offline'
                                       : d.headline + ' ' + d.tag + '  —  ' + d.constraintLabel + ' ' + d.constraintValue))
             }
-            lines.push('Left-click: dashboard · Right-click: choose the readout')
+            lines.push('Left-click: dashboard · Right-click: choose the modules')
             return lines.join('\n')
         }
         onPressed: function (b) {
@@ -283,41 +356,129 @@ Panel {
         //     unbounded caption could ask the bar to re-lay out by a hundred
         //     pixels between one sample and the next.
         readonly property int captionCeiling: 110
+        // One cell per checked module. The Loader sits directly in the cell
+        // Row: wrapping it in an Item whose width came from the Loader's own
+        // implicitWidth while the Loader was anchored centerIn to that same
+        // Item was a sizing loop, which could resolve to zero and drop the
+        // chip out of the measured width entirely.
+        // Captions stay bounded per cell. Constraint labels carry a mount path
+        // on the Disk domain ("FREE SPACE ON /HOME/PI/GOOGLE"), so an
+        // unbounded caption could ask the bar to re-lay out by a hundred
+        // pixels between one sample and the next — per-cell title plus readout
+        // tag keeps every cell stable.
         Row {
             id: barRow
             anchors.centerIn: parent
-            spacing: 5
-            Loader {
-                id: chipLoader
-                anchors.verticalCenter: parent.verticalCenter
-                // Keyed on the domain so the chip is rebuilt when the icon
-                // switches, rather than a stale one being re-bound.
-                sourceComponent: root.barDomain ? root.barDomain.barChip : null
-            }
-            Column {
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 0
-                Text {
-                    id: barHeadline
-                    text: root.barDomain ? root.barDomain.headline : '—'
-                    color: root.barForeground
-                    font.family: Style.font.family
-                    font.pixelSize: 12
-                    font.bold: true
-                    elide: Text.ElideRight
-                    width: Math.min(implicitWidth, button.captionCeiling)
-                    textFormat: Text.PlainText
+            spacing: 10
+            visible: !button.vertical
+            Repeater {
+                model: root.barCells
+                Row {
+                    required property var modelData
+                    required property int index
+                    spacing: 5
+                    Loader {
+                        anchors.verticalCenter: parent.verticalCenter
+                        // Keyed on the domain so the chip is rebuilt when the
+                        // set changes, rather than a stale one being re-bound.
+                        sourceComponent: modelData.barChip
+                    }
+                    Column {
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 0
+                        Text {
+                            text: modelData.headline
+                            color: root.barForeground
+                            font.family: Style.font.family
+                            font.pixelSize: 12
+                            font.bold: true
+                            elide: Text.ElideRight
+                            width: Math.min(implicitWidth, button.captionCeiling)
+                            textFormat: Text.PlainText
+                        }
+                        Text {
+                            // A lone auto cell keeps the legacy caption (the
+                            // constraint, or ALL CLEAR), so unchecking down to
+                            // one module reads exactly like the old icon did.
+                            // Two or more cells use title plus readout tag per
+                            // cell, which is what stays a stable width.
+                            text: {
+                                if (modelData.stale) return modelData.sectionTitle.toUpperCase() + ' · OFFLINE'
+                                if (root.barCells.length === 1 && root.barAuto) return root.barCaption
+                                return modelData.sectionTitle.toUpperCase() + ' · ' + modelData.tag
+                            }
+                            color: modelData.barCaptionInk
+                            font.pixelSize: 7
+                            font.letterSpacing: 0.6
+                            font.bold: true
+                            elide: Text.ElideRight
+                            width: Math.min(implicitWidth, button.captionCeiling)
+                            textFormat: Text.PlainText
+                        }
+                    }
+                    // Separator between cells, never after the last one.
+                    // Resolved from modelData rather than the Repeater's
+                    // index, which nested children cannot reliably see here.
+                    Rectangle {
+                        visible: root.barCells.indexOf(modelData) < root.barCells.length - 1
+                        width: 1
+                        height: 22
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: root.barForeground
+                        opacity: 0.18
+                    }
                 }
-                Text {
-                    id: barCaptionText
-                    text: root.barCaption
-                    color: root.barDomain ? root.barDomain.barCaptionInk : root.barForeground
-                    font.pixelSize: 7
-                    font.letterSpacing: 0.6
-                    font.bold: true
-                    elide: Text.ElideRight
-                    width: Math.min(implicitWidth, button.captionCeiling)
-                    textFormat: Text.PlainText
+            }
+        }
+        Column {
+            id: barColumn
+            anchors.centerIn: parent
+            spacing: 10
+            visible: button.vertical
+            Repeater {
+                model: root.barCells
+                Column {
+                    required property var modelData
+                    required property int index
+                    spacing: 2
+                    Loader {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        sourceComponent: modelData.barChip
+                    }
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: modelData.headline
+                        color: root.barForeground
+                        font.family: Style.font.family
+                        font.pixelSize: 12
+                        font.bold: true
+                        elide: Text.ElideRight
+                        width: Math.min(implicitWidth, button.captionCeiling)
+                        textFormat: Text.PlainText
+                    }
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: {
+                            if (modelData.stale) return modelData.sectionTitle.toUpperCase() + ' · OFFLINE'
+                            if (root.barCells.length === 1 && root.barAuto) return root.barCaption
+                            return modelData.sectionTitle.toUpperCase() + ' · ' + modelData.tag
+                        }
+                        color: modelData.barCaptionInk
+                        font.pixelSize: 7
+                        font.letterSpacing: 0.6
+                        font.bold: true
+                        elide: Text.ElideRight
+                        width: Math.min(implicitWidth, button.captionCeiling)
+                        textFormat: Text.PlainText
+                    }
+                    Rectangle {
+                        visible: root.barCells.indexOf(modelData) < root.barCells.length - 1
+                        width: 22
+                        height: 1
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        color: root.barForeground
+                        opacity: 0.18
+                    }
                 }
             }
         }
@@ -595,9 +756,9 @@ Panel {
                         wrapMode: Text.WordWrap
                         font.pixelSize: 10
                         text: root.actionStatus || (root.chooseMode
-                              ? 'Pick a readout to pin the icon, or Auto to let it follow the constraint  ·  Esc closes'
-                              : (root.barAuto ? 'Icon follows the biggest constraint'
-                                              : 'Icon pinned to ' + (root.barDomain ? root.barDomain.sectionTitle : root.barSource))
+                              ? 'Check modules to show them on the bar, or pin one readout  ·  Esc closes'
+                              : (root.barAuto ? 'Showing ' + (root.barCells.map(function (d) { return d.sectionTitle }).join(' + ') || 'nothing')
+                                              : 'Pinned to ' + (root.barDomain ? root.barDomain.sectionTitle : root.barSource))
                                 + '  ·  right-click it to change  ·  ← → switches pages  ·  Esc closes')
                     }
                 }
