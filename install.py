@@ -29,7 +29,7 @@ UNITS = ('cpu-pulse.service', 'ram-pulse.service', 'disk-pulse.service', 'net-pu
          'gpu-pulse.service')
 # Files and directories that make up a release. Anything else in the source
 # tree (docs, .git, the generator) is not published.
-PAYLOAD = ('manifest.json', 'Panel.qml', 'Model.js', 'README.md', 'sections', 'collectors')
+PAYLOAD = ('manifest.json', 'Panel.qml', 'BarCell.qml', 'Model.js', 'README.md', 'sections', 'collectors')
 # How long to give the shell's plugin scan before falling back to editing the
 # layout file directly. The scan is a subprocess and IPC answers before it
 # returns, so the first put after a rescan can honestly say "not ready".
