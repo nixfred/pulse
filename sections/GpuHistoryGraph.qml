@@ -1,0 +1,129 @@
+import QtQuick
+import "GpuModel.js" as Model
+
+// Busy, its bucket peak, VRAM and temperature over time. Four traces on one
+// 0-100 axis, which works because every one of them is already a percentage of
+// something the card cannot exceed.
+Item {
+    id: root
+    // False drops the axis labels and their gutters, for the Overview cards
+    // where the chart is too short to carry them.
+    property bool axesVisible: true
+    property var historyData: ({points: [], seconds: 3600, now: 0, bucket: 15})
+    property color tint: '#43f2a1'
+    property color heat: '#ffa86b'
+    // VRAM gets its own colour: it is the reading most likely to be the reason
+    // a GPU is unusable, and it must not be mistaken for the busy trace.
+    property color memTint: '#7aa2ff'
+    // Chrome is handed down by the panel so the graph follows the Omarchy
+    // theme. The defaults keep it standalone for widget tests, which
+    // instantiate it without the shell singletons.
+    property color ink: '#edf5f7'
+    property color surface: '#17232d'
+    readonly property color grid: Qt.alpha(ink, 0.17)
+    readonly property color axis: Qt.alpha(ink, 0.58)
+    property int hoverIndex: -1
+    readonly property var points: historyData.points || []
+    readonly property var hoverPoint: points[hoverIndex] || null
+    // History keeps landing every 15s while the dashboard is closed. Painting
+    // for it then is wasted; the graph catches up when it becomes visible.
+    function repaint() { if (root.visible) graph.requestPaint() }
+    onHistoryDataChanged: { hoverIndex = -1; repaint() }
+    onTintChanged: repaint()
+    onHeatChanged: repaint()
+    onMemTintChanged: repaint()
+    onInkChanged: repaint()
+    onVisibleChanged: repaint()
+    Canvas {
+        id: graph
+        anchors.fill: parent
+        onWidthChanged: root.repaint()
+        Connections { target: root; function onAxesVisibleChanged() { root.repaint() } }
+        onHeightChanged: root.repaint()
+        onPaint: {
+            var gutter = root.axesVisible ? 38 : 0, foot = root.axesVisible ? 26 : 4
+            var c = getContext('2d'), w = width - gutter, h = height - foot
+            c.reset(); c.clearRect(0, 0, width, height)
+            c.font = '10px sans-serif'; c.textAlign = 'right'
+            for (var line = 0; line <= 4; line++) {
+                var y = 8 + (h - 8) * line / 4
+                c.strokeStyle = root.grid; c.lineWidth = 1
+                c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke()
+                if (root.axesVisible) { c.fillStyle = root.axis; c.fillText(String(100 - line * 25) + '%', width, y + 3) }
+            }
+            function xAt(p) { return w * (p[0] - (root.historyData.now - root.historyData.seconds)) / root.historyData.seconds }
+            function yAt(v) { return 8 + (h - 8) * (1 - Model.clamp(v, 0, 100) / 100) }
+            var pts = root.points
+            // Empty elapsed time stays empty. Gaps and reboots break every
+            // trace: column 6 is the boot id, so a line is never drawn across a
+            // restart. Column 1 is average busy, 2 the bucket peak, 3 the
+            // temperature, 4 VRAM used.
+            var series = [
+                {col: 1, width: 2.2, color: root.tint},
+                {col: 2, width: 1, color: Qt.alpha(root.tint, 0.28)},
+                {col: 4, width: 1.4, color: root.memTint},
+                {col: 3, width: 1, color: root.heat}
+            ]
+            for (var s = 0; s < series.length; s++) {
+                var metric = series[s].col
+                c.lineWidth = series[s].width
+                c.strokeStyle = series[s].color
+                c.beginPath()
+                for (var i = 0; i < pts.length; i++) {
+                    var p = pts[i], x = xAt(p), y = yAt(p[metric])
+                    // A null temperature or VRAM reading is a card that does
+                    // not report it, not a zero.
+                    if ((metric === 3 || metric === 4) && !(p[metric] > 0)) continue
+                    if (i === 0 || p[0] - pts[i - 1][0] > root.historyData.bucket * 2.5 || p[6] !== pts[i - 1][6]
+                        || ((metric === 3 || metric === 4) && !(pts[i - 1][metric] > 0))) c.moveTo(x, y)
+                    else c.lineTo(x, y)
+                }
+                c.stroke()
+            }
+            if (pts.length) {
+                var last = pts[pts.length - 1]
+                c.fillStyle = root.tint; c.beginPath(); c.arc(xAt(last), yAt(last[1]), 3, 0, Math.PI * 2); c.fill()
+            }
+            if (root.axesVisible) {
+                c.fillStyle = root.axis; c.textAlign = 'left'
+                c.fillText(root.historyData.seconds === 3600 ? '1 hour ago' : root.historyData.seconds === 86400 ? '24 hours ago' : '7 days ago', 0, height - 3)
+                c.textAlign = 'right'; c.fillText('now', w, height - 3)
+            }
+        }
+    }
+    Rectangle {
+        visible: root.hoverPoint !== null
+        x: root.hoverPoint ? Math.max(0, Math.min(parent.width - 38, (root.hoverPoint[0] - (root.historyData.now - root.historyData.seconds)) / root.historyData.seconds * (parent.width - 38))) : 0
+        y: 8; width: 1; height: parent.height - 34; color: root.axis
+    }
+    Rectangle {
+        visible: root.hoverPoint !== null
+        anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter
+        width: hoverText.implicitWidth + 20; height: 27; radius: 7
+        color: root.surface; border.color: Qt.alpha(root.ink, 0.32)
+        Text {
+            id: hoverText; anchors.centerIn: parent; color: root.ink; font.pixelSize: 11
+            text: {
+                var p = root.hoverPoint
+                if (!p) return ''
+                return Qt.formatDateTime(new Date(p[0] * 1000), 'ddd h:mm AP')
+                    + '  ·  GPU ' + Model.pct(p[1]) + '  ·  peak ' + Model.pct(p[2])
+                    + '  ·  VRAM ' + (p[4] > 0 ? Model.pct(p[4]) : '—')
+                    + '  ·  ' + (p[3] > 0 ? Model.temp(p[3]) : 'no temp')
+            }
+        }
+    }
+    MouseArea {
+        anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton
+        onExited: root.hoverIndex = -1
+        onPositionChanged: function (mouse) {
+            var wanted = root.historyData.now - root.historyData.seconds + mouse.x / (width - 38) * root.historyData.seconds
+            var best = -1, distance = Infinity
+            for (var i = 0; i < root.points.length; i++) {
+                var d = Math.abs(root.points[i][0] - wanted)
+                if (d < distance) { distance = d; best = i }
+            }
+            root.hoverIndex = distance < root.historyData.bucket * 3 ? best : -1
+        }
+    }
+}

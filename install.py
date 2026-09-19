@@ -25,7 +25,8 @@ import tempfile
 import time
 
 PLUGIN_ID = 'nixfred.pulse'
-UNITS = ('cpu-pulse.service', 'ram-pulse.service', 'disk-pulse.service', 'net-pulse.service')
+UNITS = ('cpu-pulse.service', 'ram-pulse.service', 'disk-pulse.service', 'net-pulse.service',
+         'gpu-pulse.service')
 # Files and directories that make up a release. Anything else in the source
 # tree (docs, .git, the generator) is not published.
 PAYLOAD = ('manifest.json', 'Panel.qml', 'Model.js', 'README.md', 'sections', 'collectors')

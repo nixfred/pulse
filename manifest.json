@@ -2,12 +2,16 @@
   "schemaVersion": 1,
   "id": "nixfred.pulse",
   "name": "Pulse",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": "Fred Nix",
   "license": "MIT",
-  "description": "CPU, RAM, Disk and Network in one widget: a summary of all four at the top, and each domain's full dashboard behind its own page.",
-  "kinds": ["bar-widget"],
-  "entryPoints": {"barWidget": "Panel.qml"},
+  "description": "CPU, RAM, Disk, Network and GPU in one widget: a summary of all four at the top, and each domain's full dashboard behind its own page.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
   "barWidget": {
     "displayName": "Pulse",
     "description": "Four live chips in one bar entry. Overview answers how the machine is; CPU, RAM, Disk and Network each keep their whole dashboard, history and controls. Right-click for settings.",

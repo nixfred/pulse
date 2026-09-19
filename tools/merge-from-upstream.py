@@ -2,6 +2,20 @@ import re,os,sys
 SRC=os.path.expanduser('~/.config/omarchy/plugins/')
 DST=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))+'/'
 
+# The GPU domain is deliberately absent from every dict in this file.
+#
+# This script builds a Section by reading an installed upstream plugin's
+# Panel.qml and transplanting its body (see the `for name,sp in SPEC.items()`
+# loop, which opens SRC/<pid>/Panel.qml). GPU Pulse never existed as its own
+# plugin, so there is nothing to transplant: adding a 'Gpu' entry here would
+# fail on that open(). sections/GpuSection.qml, GpuModel.js, GpuChip.qml and
+# GpuHistoryGraph.qml are hand-written against the same contracts and are not
+# generated, not patched, and not overwritten by a run of this script.
+#
+# The corollary still applies to the other four: this script OVERWRITES their
+# sections, models, chips and graphs, so any change made to accommodate the
+# GPU domain has to live in SUMMARY/MODEL_PATCHES/LAYOUT_PATCHES below, never
+# in the generated files themselves.
 SPEC={
  'Cpu': dict(pid='nixfred.cpu-pulse', key='cpu', title='CPU', blurb='Your processor, in motion.',
              tabs=['Overview','CPU hogs','Processor lab','About'], extra_imports=[]),

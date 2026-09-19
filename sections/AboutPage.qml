@@ -95,7 +95,7 @@ Item {
             Label {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: 'One widget for the four readings that tell you what a machine is doing: how hard it is thinking, how much it can still remember, how much room it has left, and whether it can reach anything. Four plugins used to do this from four bar entries. This is those four, whole, behind one chip row.'
+                text: 'One widget for the five readings that tell you what a machine is doing: how hard it is thinking, how much it can still remember, how much room it has left, and whether it can reach anything. Four plugins used to do this from four bar entries. This is those four, whole, behind one chip row.'
             }
         }
 
@@ -186,7 +186,7 @@ Item {
                 value: {
                     var live = 0
                     for (var i = 0; i < host.domains.length; i++) if (host.domains[i] && !host.domains[i].stale) live++
-                    return live + ' of 4'
+                    return live + ' of ' + host.domains.length
                 }
                 hint: 'user services, still separate'
             }
@@ -229,6 +229,13 @@ Item {
                         font.pixelSize: 11
                     }
                 }
+            }
+            Row {
+                spacing: 8
+                Label { text: '·'; font.pixelSize: 11 }
+                Label { text: 'GPU Pulse'; color: root.ink; font.pixelSize: 11; width: 90 }
+                Label { text: 'gpu-pulse.service'; font.pixelSize: 11; width: 130 }
+                Label { text: 'new here — it never existed as its own plugin'; font.pixelSize: 11 }
             }
         }
 

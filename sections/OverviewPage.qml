@@ -158,6 +158,6 @@ Item {
         color: root.inkDim
         font.pixelSize: 10
         textFormat: Text.PlainText
-        text: 'Each card opens that domain\'s full dashboard — every reading, table and control the separate plugin had. Constraints ranks all four against one another.'
+        text: 'Each card opens that domain\'s full dashboard — every reading, table and control the separate plugin had. Constraints ranks all five against one another.'
     }
 }

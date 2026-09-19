@@ -46,11 +46,12 @@ Panel {
         {key: 'ram',      label: 'RAM'},
         {key: 'disk',     label: 'Disk'},
         {key: 'net',      label: 'Network'},
+        {key: 'gpu',      label: 'GPU'},
         {key: 'settings', label: 'Settings'},
         {key: 'about',    label: 'About'}
     ]
-    readonly property var domains: [cpuSection, ramSection, diskSection, netSection]
-    readonly property var domainKeys: ['cpu', 'ram', 'disk', 'net']
+    readonly property var domains: [cpuSection, ramSection, diskSection, netSection, gpuSection]
+    readonly property var domainKeys: ['cpu', 'ram', 'disk', 'net', 'gpu']
 
     // Theme roles. One decision — the popup text colour — drives the whole
     // surface, exactly as each of the four plugins did on its own, so the
@@ -177,7 +178,8 @@ Panel {
             cpu: cpuSection.status ? JSON.parse(cpuSection.status()) : null,
             ram: ramSection.status ? JSON.parse(ramSection.status()) : null,
             disk: diskSection.status ? JSON.parse(diskSection.status()) : null,
-            net: netSection.status ? JSON.parse(netSection.status()) : null
+            net: netSection.status ? JSON.parse(netSection.status()) : null,
+            gpu: gpuSection.status ? JSON.parse(gpuSection.status()) : null
         })
     }
 
@@ -458,7 +460,7 @@ Panel {
                                     var tail = root.version !== '' ? '   ·   v' + root.version : ''
                                     if (root.chooseMode) return 'Choose what the bar icon shows.' + tail
                                     var s = root.sectionFor(root.active)
-                                    return (s ? s.sectionBlurb : 'CPU, memory, storage and network in one place.') + tail
+                                    return (s ? s.sectionBlurb : 'CPU, memory, storage, network and graphics in one place.') + tail
                                 }
                                 font.pixelSize: 11
                             }
@@ -564,6 +566,13 @@ Panel {
                         host: root
                         width: parent.width
                         visible: !root.chooseMode && root.active === 'net'
+                        height: visible ? implicitHeight : 0
+                    }
+                    GpuSection {
+                        id: gpuSection
+                        host: root
+                        width: parent.width
+                        visible: !root.chooseMode && root.active === 'gpu'
                         height: visible ? implicitHeight : 0
                     }
                     PageLoader {

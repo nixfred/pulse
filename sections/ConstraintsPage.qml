@@ -120,13 +120,20 @@ Item {
             }
         }
 
+        // Two columns of domains. Stacked, five blocks needed 1042 px of a
+        // 960 px laptop screen; side by side they need three rows instead of
+        // five and fit with room to spare. The worst domain is still first,
+        // top-left, because the list is ranked before it is laid out.
+        Flow {
+            width: column.width
+            spacing: 10
         Repeater {
             model: root.ranked
             Rectangle {
                 id: block
                 required property var modelData
                 required property int index
-                width: column.width
+                width: (column.width - 10) / 2
                 height: inner.implicitHeight + 24
                 radius: 14
                 color: root.card
@@ -260,12 +267,13 @@ Item {
                 }
             }
         }
+        } // end of the two-column constraint Flow
 
         Label {
             width: parent.width
             wrapMode: Text.WordWrap
             font.pixelSize: 10
-            text: 'One 0–1 severity scale across all four, so a hot drive and a busy processor compare directly. Click any card for that domain\'s full dashboard.'
+            text: 'One 0–1 severity scale across all five, so a full graphics card and a busy processor compare directly. Click any card for that domain\'s full dashboard.'
         }
     }
 }

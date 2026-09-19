@@ -6,7 +6,7 @@
 
 **One Omarchy bar icon that always shows you the thing holding your machine back.**
 
-CPU, memory, storage and network — four dashboards, one widget, zero guessing about which one is the problem.
+CPU, memory, storage, network and GPU — five dashboards, one widget, zero guessing about which one is the problem.
 
 ## [nixfred.com](https://nixfred.com)
 
@@ -24,9 +24,9 @@ CPU, memory, storage and network — four dashboards, one widget, zero guessing 
 
 ## The idea
 
-A system monitor that shows you four numbers is asking you to do the ranking.
+A system monitor that shows you five numbers is asking you to do the ranking.
 
-Pulse does the ranking. Every reading across all four domains is scored on one
+Pulse does the ranking. Every reading across all five domains is scored on one
 shared severity scale, and the bar icon becomes whichever domain is currently
 worst — the chip changes shape, the colour changes with it, and the caption
 says what it is and why:
@@ -54,9 +54,9 @@ verdict, and its own history trace. Clicking one opens that domain in full.
 
 ---
 
-## Constraints — the page that only exists because the four are together
+## Constraints — the page that only exists because they are together
 
-Four separate monitors can each tell you how they are doing. None of them can
+Separate monitors can each tell you how they are doing. None of them can
 tell you which one is the problem, because none of them can see the other three.
 
 <div align="center">
@@ -73,6 +73,7 @@ threshold, an explanation:
 | **RAM** | free headroom, pages swapped to disk, memory pressure, full stalls, compressed swap held in RAM |
 | **Disk** | free space on the followed filesystem, drive busy time, I/O pressure, full I/O stalls, drive temperature, SMART warnings and wear |
 | **Network** | route out, internet round trip, packet loss, Wi-Fi signal, gateway round trip |
+| **GPU** | video memory in use, sustained load, temperature, and whether the driver is currently holding the card back |
 
 The same scores drive the bar icon, so whatever the icon is showing is always
 the top row of this page.
@@ -110,6 +111,7 @@ seven days of history.
 | **RAM** | Overview · RAM hoarders · Memory lab · About |
 | **Disk** | Overview · Disk hogs · Storage lab · About |
 | **Network** | Overview · Wi-Fi · Interfaces · Talkers · Data · Network lab · About |
+| **GPU** | Overview · GPU hogs · Graphics lab · About |
 
 Connect to Wi-Fi, kill a memory hoarder, switch power profile, follow a
 different filesystem — all of it still works, because it is the same code.
@@ -118,7 +120,7 @@ different filesystem — all of it still works, because it is the same code.
 
 ## Settings
 
-Every setting the four plugins had, grouped by domain, plus the one decision
+Every setting the five domains have, grouped by domain, plus the one decision
 that only exists once they share a bar entry: what the icon follows.
 
 <div align="center">
@@ -149,7 +151,7 @@ cd pulse
 python3 install.py
 ```
 
-The installer publishes the plugin atomically, installs and starts the four
+The installer publishes the plugin atomically, installs and starts the five
 collector services, puts the widget on the right of your bar, and disables the
 four plugins it replaces without deleting them.
 
@@ -190,7 +192,7 @@ omarchy-shell nixfred.pulse pin auto              # icon follows the constraint
 omarchy-shell nixfred.pulse pin cpu               # or pin it
 omarchy-shell nixfred.pulse display cpu 2         # that domain's readout
 omarchy-shell nixfred.pulse historyRange ram 86400
-omarchy-shell nixfred.pulse status                # all four, as JSON
+omarchy-shell nixfred.pulse status                # all five, as JSON
 ```
 
 `status` nests each domain's original status object under its key, so anything
@@ -205,7 +207,7 @@ Panel.qml                 bar icon, page switcher, the two merged pages' host
 Model.js                  helpers for the merged chrome only
 sections/
   Constraints.js          the severity model — the one piece of shared judgement
-  OverviewPage.qml        four cards
+  OverviewPage.qml        five cards
   ConstraintsPage.qml     the ranking
   ChooserPage.qml         every readout
   SettingsPage.qml        every setting
@@ -214,7 +216,8 @@ sections/
   RamSection.qml          │ the four original panels, ported whole
   DiskSection.qml         │ (plus their chips, graphs and models)
   NetSection.qml          ┘
-collectors/               the four Python recorders and their user units
+  GpuSection.qml          the one domain with no plugin before Pulse
+collectors/               the five Python recorders and their user units
 ```
 
 Each section gets a small host bridge supplying the members the original code
@@ -222,7 +225,8 @@ already used — `bar`, `opened`, `setting()`, `close()` — so the ported bodie
 needed no rewriting at all.
 
 **The collectors were deliberately left alone.** Four daemons, four user units,
-four state directories, unchanged. The merge stopped at the UI, so it cost no
+four state directories, unchanged, and GPU Pulse added a fifth of each in the
+same shape. The merge stopped at the UI, so it cost no
 recorded history and any one of them can still be debugged on its own.
 
 ---

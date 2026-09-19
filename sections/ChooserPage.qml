@@ -87,7 +87,7 @@ Item {
             Label {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: 'One icon, and by default it is not a fixed reading — it follows whichever of the four is most constrained and tells you which one that is. Pin any readout below to stop it moving.'
+                text: 'One icon, and by default it is not a fixed reading — it follows whichever of the five is most constrained and tells you which one that is. Pin any readout below to stop it moving.'
             }
         }
 

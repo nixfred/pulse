@@ -3,6 +3,40 @@
 The version lives in `manifest.json`. Every release bumps it, adds an entry
 here, and is tagged `vX.Y.Z`: a fix bumps the patch, a new capability the minor.
 
+## 1.3.0 - 2026-09-19
+
+### Added
+- **A fifth domain: GPU.** Everything the other four have. An Overview with a
+  live die and a VRAM band, a GPU hogs tab, a Graphics lab, an About page, four
+  bar readouts (busy, VRAM, temperature, power), constraint scoring on the same
+  shared severity scale, seven days of history at the same three ranges, and a
+  place in the auto-switching bar icon. The GPU can now take the icon when it is
+  the thing holding the machine back.
+- **NVIDIA cards are read through the driver's own library, not `nvidia-smi`.**
+  A full sample measures 0.017 ms against 46-52 ms to fork that program, which
+  is roughly 2,800x cheaper, and it also reports the enforced power limit that
+  `nvidia-smi` leaves as N/A on this laptop. Intel and AMD cards are read from
+  the kernel's own sysfs counters. Fields a card does not support come back as a
+  dash rather than a confident zero: this laptop reports no fan speed.
+- **Every GPU is listed, not just the first.** A laptop with a discrete card and
+  an integrated one shows both; the discrete one leads the readings because it
+  is the one that runs out of memory and holds work up.
+- **The GPU hogs tab names what holds video memory**, with the model name pulled
+  out of the command line, and the scan is demand-gated like the other process
+  tables: nothing is walked unless that tab is open.
+
+### Fixed
+- The Constraints page laid its domains out in a single column, which needed
+  1,042 px of a 960 px laptop screen once there were five. It now uses two
+  columns and needs 757.
+
+### Notes
+- GPU throttle counters are cumulative since boot, and a laptop card sits at its
+  board power limit essentially always, so the raw total reads as "throttled for
+  days" on a perfectly healthy machine. It is scored as a rate, and only when
+  the driver reports a reason right now. This is the same trap the CPU domain
+  hit in 1.1.0 and the same corroboration rule the disk domain needed for #1.
+
 ## 1.2.0 - 2026-09-15
 
 ### Performance

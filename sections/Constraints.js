@@ -119,7 +119,8 @@ var SHORT = {
     space: 'LOW SPACE', othermount: 'LOW SPACE', busy: 'BUSY', wear: 'WORN',
     smart: 'SMART',
     offline: 'OFFLINE', captive: 'PARTIAL', latency: 'LATENCY',
-    loss: 'LOSS', signal: 'SIGNAL', gateway: 'GATEWAY'
+    loss: 'LOSS', signal: 'SIGNAL', gateway: 'GATEWAY',
+    vram: 'VRAM FULL', powercap: 'POWER CAP', nogpu: 'NO GPU'
 }
 
 function shortLabel(row) {
@@ -347,6 +348,71 @@ function net(n, stale) {
     out.push(entry('gateway', 'Gateway round trip', ms(gatewayTypical),
         'The first hop, as the median packet sees it. Latency here is your own network, not the internet, so it separates a slow link from a slow world.',
         ramp(gatewayTypical, 5, 60)))
+
+    return rank(out)
+}
+
+
+// ---- GPU ----------------------------------------------------------------
+
+function gpu(g, stale) {
+    if (stale || !g || !g.ts) return offline('GPU', 'gpu-pulse.service')
+    if (!g.present) {
+        // Not a constraint, and not an error either: plenty of machines have
+        // no GPU the kernel will talk about. It is informational so it can
+        // never take the bar icon.
+        return [entry('nogpu', 'No GPU detected', '—',
+            (g.reason || 'Nothing reported graphics telemetry on this machine') +
+            '. The other four domains are unaffected.', 0, true)]
+    }
+    var out = []
+
+    // VRAM leads. On a machine that runs models locally this is the reading
+    // that actually stops you: a full card refuses the next load while sitting
+    // at 0% busy, so scoring it by utilisation would call a wall "idle".
+    out.push(entry('vram', 'Video memory in use', pct(g.memUsedPct),
+        'How much of the card\'s memory is already spoken for. Unlike system RAM there is ' +
+        'no swap behind it: when this is full the next model or texture simply does not load, ' +
+        'however idle the processor beside it looks.',
+        ramp(g.memUsedPct, 75, 98)))
+
+    out.push(entry('load', 'Sustained load', pct(g.busyPct),
+        'How much of the graphics processor is already committed. Above about half, work ' +
+        'starts queueing behind other work rather than starting when it is submitted.',
+        ramp(g.busyPct, 50, 100)))
+
+    if (typeof g.tempC === 'number') {
+        out.push(entry('thermal', 'Temperature', deg(g.tempC),
+            'Silicon temperature. Cards hold their clocks to roughly the high eighties and ' +
+            'start trading speed for heat beyond that.',
+            ramp(g.tempC, 78, 92)))
+    }
+
+    // The counters behind this are cumulative since boot, and on a laptop the
+    // power one accrues a full second every second: read as a total it says
+    // this card has been throttled for 236,000 seconds, which is true and
+    // useless. It is scored only when the driver currently reports a reason,
+    // with the rate sizing how hard. That is the same corroboration rule the
+    // disk domain needed when io_uring waits were inflating pressure with no
+    // drive to back them up.
+    var active = g.throttleActive || []
+    var rate = g.throttleRate || {}
+    var worstRate = Math.max(rate.thermal || 0, rate.power || 0)
+    if (active.length) {
+        out.push(entry('throttle', 'Being held back', active.length + ' reason' + (active.length > 1 ? 's' : ''),
+            'The driver reports the card is currently limited: ' + active.join(', ') + '. ' +
+            'Over the last sample it spent ' + Math.round(worstRate) + ' seconds a minute limited. ' +
+            'Clocks are being traded away, so work takes longer than the hardware could manage.',
+            ramp(worstRate, 5, 45)))
+    } else if (worstRate > 55 && typeof g.powerPct === 'number') {
+        // A laptop card permanently at its board limit is a fact about the
+        // laptop, not something to fix, so it says so without competing for
+        // the icon.
+        out.push(entry('powercap', 'Power limit', (g.powerLimitW || 0).toFixed(0) + ' W board limit',
+            'This card is held at its board power limit essentially all the time, which is how ' +
+            'laptop GPUs are configured. It is the ceiling you bought, not a fault.',
+            0.2, true))
+    }
 
     return rank(out)
 }
