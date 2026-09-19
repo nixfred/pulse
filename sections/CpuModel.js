@@ -42,6 +42,9 @@ var RAMP_MAX_LIGHT = 0.78
 var RAMP_HUE_FLOOR = 0.02
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, Number(v) || 0)) }
+// Audit #14/#15: numeric guards shared with Disk/Net models.
+function num(v, fallback) { var n = Number(v); return isFinite(n) ? n : (fallback === undefined ? 0 : fallback) }
+function has(v) { return v !== null && v !== undefined && isFinite(Number(v)) }
 
 function hexToRgb(hex) {
     var m = /^#([0-9a-fA-F]{6})$/.exec(String(hex || '').replace(/^\s+|\s+$/g, ''))
@@ -161,10 +164,13 @@ function rate(v) {
 }
 function readout(m, mode) {
     if (!m || !m.warm) return '—'
-    if (mode === 1) return Number(m.idlePct).toFixed(1)+'%'
+    // Guard isFinite like RamModel (audit #8): a NaN/Infinity reading must
+    // render as '—', never as "NaN%" or "Infinity GHz".
+    function fin(v) { return v !== null && v !== undefined && isFinite(Number(v)) }
+    if (mode === 1) return fin(m.idlePct) ? Number(m.idlePct).toFixed(1)+'%' : '—'
     if (mode === 2) return temp(m.temp)
     if (mode === 3) return ghz(m.freq ? m.freq.avg : null)
-    return Number(m.busyPct).toFixed(1)+'%'
+    return fin(m.busyPct) ? Number(m.busyPct).toFixed(1)+'%' : '—'
 }
 function modeName(mode) { return ['% busy', '% idle', 'Temperature', 'Clock speed'][mode] || '% busy' }
 function modeTag(mode) { return ['BUSY', 'IDLE', 'PACKAGE', 'CLOCK'][mode] || 'BUSY' }

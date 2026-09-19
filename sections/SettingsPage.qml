@@ -102,9 +102,10 @@ Item {
         width: parent.width
         spacing: 10
 
-        // There is one icon, so which domain it speaks for is a single
-        // decision rather than four. Auto is the default and the reason the
-        // four were merged; the rest of this page is per-domain detail.
+        // One widget, one checked set. Auto (the default) shows every checked
+        // module side by side; a pin shows one domain and stays put. The
+        // checkboxes below are the saved config — they persist to shell.json
+        // and are the same set the right-click chooser edits.
         Rectangle {
             width: column.width
             height: barInner.implicitHeight + 28
@@ -116,16 +117,17 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 14
                 spacing: 10
-                Heading { text: 'THE BAR ICON'; font.letterSpacing: 1.5 }
+                Heading { text: 'THE BAR ENTRY'; font.letterSpacing: 1.5 }
                 Label {
                     width: parent.width
                     wrapMode: Text.WordWrap
                     text: host.barAuto
-                          ? 'Following the biggest constraint. Right now that is '
-                            + (host.barDomain ? host.barDomain.sectionTitle + ' — ' + host.barDomain.constraintLabel.toLowerCase()
-                                            + ' at ' + host.barDomain.constraintValue : 'nothing measurable') + '.'
+                          ? 'Showing ' + (host.barCells.map(function (d) { return d.sectionTitle }).join(' + ') || 'nothing')
+                            + '. Biggest constraint right now: '
+                            + (host.worst ? host.worst.sectionTitle + ' — ' + host.worst.constraintLabel.toLowerCase()
+                                           + ' at ' + host.worst.constraintValue : 'nothing measurable') + '.'
                           : 'Pinned to ' + (host.barDomain ? host.barDomain.sectionTitle : host.barSource)
-                            + '. It will not move, even if another domain becomes tighter.'
+                            + '. It shows one chip and will not move. Checking a module below returns to the checked set.'
                 }
                 Flow {
                     width: parent.width
@@ -135,7 +137,7 @@ Item {
                         height: 34
                         selected: host.barAuto
                         accent: host.barDomain ? host.barDomain.tint : root.ink
-                        text: 'Auto  ·  biggest constraint'
+                        text: 'Auto  ·  checked modules'
                         onClicked: host.pinBar('auto', null)
                     }
                     Repeater {
@@ -152,9 +154,33 @@ Item {
                         }
                     }
                 }
+                Flow {
+                    width: parent.width
+                    spacing: 6
+                    Repeater {
+                        model: host.domains
+                        Toggle {
+                            required property var modelData
+                            required property int index
+                            readonly property string key: host.domainKeys[index]
+                            label: modelData.sectionTitle + ' on the bar'
+                            labelWidth: 128
+                            accent: modelData.tint
+                            value: host.isBarShown(key)
+                            onPicked: function (next) { host.setBarShown(key, next) }
+                        }
+                    }
+                    Action {
+                        visible: host.barKeys.length < host.domainKeys.length && host.barAuto
+                        text: 'Show all four'
+                        implicitWidth: 128
+                        implicitHeight: 26
+                        onClicked: host.showAllBars()
+                    }
+                }
                 Label {
                     font.pixelSize: 10
-                    text: 'Right-clicking the icon opens the same choice with every readout listed and priced against live values.'
+                    text: 'Right-clicking the bar opens the same checkboxes with every readout listed and priced against live values. At least one module stays checked.'
                 }
             }
         }

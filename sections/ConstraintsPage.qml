@@ -50,17 +50,13 @@ Item {
     Component.onCompleted: root.rerank()
     Timer { interval: 2000; running: root.visible; repeat: true; onTriggered: root.rerank() }
     // One colour scale for severity, independent of any domain's own tint, so
-    // a red bar means the same thing in every row on the page.
-    function severityColor(severity) {
-        if (severity >= 0.85) return Color.urgent
-        if (severity >= 0.62) return Qt.rgba(0.92, 0.66, 0.25, 1)
-        if (severity >= 0.34) return Qt.rgba(0.85, 0.80, 0.35, 1)
-        return Util.alpha(root.ink, 0.45)
-    }
-    function severityWord(severity) {
-        return severity >= 0.85 ? 'CRITICAL' : severity >= 0.62 ? 'TIGHT'
-             : severity >= 0.34 ? 'NOTICEABLE' : 'COMFORTABLE'
-    }
+    // a red bar means the same thing in every row on the page. The scale
+    // itself lives in PulseChrome/Constraints.bandColor (audits #22, #23) —
+    // this page only binds its theme inputs. The local functions stay so
+    // existing call sites read unchanged.
+    PulseChrome { id: chrome; urgent: Color.urgent; soft: Util.alpha(root.ink, 0.45) }
+    function severityColor(severity) { return chrome.severityColor(severity) }
+    function severityWord(severity) { return chrome.severityWord(severity) }
 
     component Label: Text {
         color: root.inkDim
@@ -135,7 +131,7 @@ Item {
                 required property int index
                 width: (column.width - 10) / 2
                 height: inner.implicitHeight + 24
-                radius: 14
+                radius: chrome.cardRadius
                 color: root.card
                 border.color: block.index === 0 ? Qt.alpha(modelData.tint, 0.6) : root.cardEdge
                 border.width: block.index === 0 ? 2 : 1

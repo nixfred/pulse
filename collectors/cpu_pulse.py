@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """CPU Pulse: unprivileged telemetry, persistent history, focus-only navigation."""
 import argparse
+import errno
 import fcntl
 import json
 import os
@@ -9,16 +10,22 @@ import re
 import shutil
 import socket
 import sqlite3
+import stat
 import subprocess
+import tempfile
 import time
 
-STATE = Path(os.environ.get('XDG_STATE_HOME') or str(Path.home() / '.local/state')) / 'cpu-pulse'
+_state_home = os.environ.get('XDG_STATE_HOME','')
+STATE = (Path(_state_home) if os.path.isabs(_state_home) else Path.home()/'.local/state')/'cpu-pulse'
 ENV_KEYS = {'HERDR_ENV', 'HERDR_SOCKET_PATH', 'HERDR_WORKSPACE_ID', 'HERDR_TAB_ID', 'HERDR_PANE_ID', 'TMUX', 'TMUX_PANE', 'BOOMUX_SHELL_ID'}
 PROFILES = ('power-saver', 'balanced', 'performance')
 LINKS = {'repo': 'https://github.com/nixfred/omacpu',
          'author': 'https://nixfred.com'}
 SYS_CPU = Path('/sys/devices/system/cpu')
-CLK = os.sysconf('SC_CLK_TCK')
+try:
+    CLK = os.sysconf('SC_CLK_TCK')
+except (AttributeError, OSError, ValueError):
+    CLK = 100
 # Columns of a /proc/stat cpu line. guest and guest_nice are already inside
 # user and nice, so they never join the total.
 STAT_FIELDS = ('user', 'nice', 'system', 'idle', 'iowait', 'irq', 'softirq', 'steal')
@@ -35,17 +42,31 @@ def read_int(path):
     except (ValueError, IndexError):
         return None
 
+C_LOCALE = dict(os.environ, LC_ALL='C', LANG='C')
+
 def run(args):
     try:
-        p = subprocess.run(args, capture_output=True, text=True, timeout=2, check=False)
+        p = subprocess.run(args, capture_output=True, text=True, timeout=2, check=False, env=C_LOCALE)
         return p.stdout if p.returncode == 0 else ''
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, UnicodeError, subprocess.TimeoutExpired):
         return ''
 
-def clients():
+def clients(query=None):
+    query = run if query is None else query
     try:
-        value = json.loads(run(['hyprctl', 'clients', '-j']))
-        return [c for c in value if isinstance(c, dict) and isinstance(c.get('pid'), int) and re.fullmatch(r'0x[0-9a-fA-F]+', str(c.get('address', '')))]
+        value = json.loads(query(['hyprctl', 'clients', '-j']))
+        if not isinstance(value, list):
+            return []
+        result = []
+        for c in value:
+            if not isinstance(c, dict) or type(c.get('pid')) is not int or c['pid'] <= 0:
+                continue
+            if not re.fullmatch(r'0x[0-9a-fA-F]+', str(c.get('address', ''))):
+                continue
+            if not isinstance(c.get('workspace'), dict):
+                c = dict(c, workspace={})
+            result.append(c)
+        return result
     except (ValueError, TypeError):
         return []
 
@@ -75,43 +96,80 @@ def window_for(pid, procs, windows):
         pid = procs.get(pid, {}).get('ppid', 0)
     return None
 
-def target_for(p, procs, wins):
+def owned_socket(path):
+    # Herdr/TMUX socket paths come from the target process's own environment,
+    # so they are attacker-influenced. Only a path that is currently a socket
+    # owned by this user is usable; anything else degrades to plain window
+    # focus rather than failing the click.
+    try:
+        info = os.stat(path)
+    except (OSError, ValueError, TypeError):
+        return ''
+    if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+        return ''
+    return path
+
+def related(a, b, procs):
+    # A window title is attacker-reproducible: any same-user client can set
+    # its title to match. A focus target the process tree cannot relate to
+    # the target process is title-only evidence. Either direction counts, so
+    # a terminal emulator above the shell and a helper below it both bind.
+    for start, goal in ((a, b), (b, a)):
+        seen = set()
+        pid = start
+        while isinstance(pid, int) and pid > 1 and pid not in seen:
+            if pid == goal:
+                return True
+            seen.add(pid)
+            pid = procs.get(pid, {}).get('ppid', 0)
+    return False
+
+def target_for(p, procs, wins, query=None):
+    query = run if query is None else query
     windows = {c['pid']: c for c in wins}
     w = window_for(p['pid'], procs, windows)
     env = environment(p['pid'])
     host = {}
     # Boomux terminal titles carry an exact shell id. Focusing that existing
     # window needs no launcher and cannot create or terminate a session.
+    # Titles alone do not bind a window to a shell -- any same-user client
+    # can set its title -- so a candidate whose window process the tree
+    # relates to the target wins over one that merely matches the title. The
+    # title-only fallback stays for multiplexer layouts where the window and
+    # the shell share no ancestry, where no better binding is available.
     shell = env.get('BOOMUX_SHELL_ID', '')
-    if shell:
-        match = [c for c in wins if str(c.get('title', '')).split(' ')[0] == 'boomux:shell:' + shell]
+    if shell and re.fullmatch(r'\S{1,64}', shell):
+        match = [c for c in wins if str(c.get('title', '')).startswith('boomux:shell:') and str(c.get('title', '')).split(' ')[0].endswith(':' + shell)]
         if match:
-            w = match[0]
+            kin = [c for c in match if isinstance(c.get('pid'), int) and related(p['pid'], c['pid'], procs)]
+            w = kin[0] if kin else match[0]
     if not shell and env.get('HERDR_ENV') == '1' and env.get('HERDR_PANE_ID'):
-        sock = env.get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock')
-        for q in procs.values():
-            if q['name'] != 'herdr':
-                continue
-            cw = window_for(q['pid'], procs, windows)
-            ce = environment(q['pid'])
-            cs = ce.get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock')
-            if cw and cs == sock:
-                w = cw
-                host = {'kind': 'herdr', 'socket': sock, 'workspace': env.get('HERDR_WORKSPACE_ID', ''), 'tab': env.get('HERDR_TAB_ID', ''), 'pane': env['HERDR_PANE_ID']}
-                break
-    if not shell and not host and env.get('TMUX') and re.fullmatch(r'%\d+', env.get('TMUX_PANE', '')):
-        sock = env['TMUX'].rsplit(',', 2)[0]
-        pane = env['TMUX_PANE']
-        # Attach only to a client already displaying this pane's session.
-        session = run(['tmux', '-S', sock, 'display-message', '-p', '-t', pane, '#{session_id}']).strip()
-        for line in run(['tmux', '-S', sock, 'list-clients', '-F', '#{client_pid}\t#{session_id}\t#{client_name}']).splitlines():
-            parts = line.split('\t')
-            if len(parts) == 3 and parts[0].isdigit() and parts[1] == session:
-                cw = window_for(int(parts[0]), procs, windows)
-                if cw:
+        sock = owned_socket(env.get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock'))
+        if sock:
+            for q in procs.values():
+                if q['name'] != 'herdr':
+                    continue
+                cw = window_for(q['pid'], procs, windows)
+                ce = environment(q['pid'])
+                cs = ce.get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock')
+                if cw and cs == sock:
                     w = cw
-                    host = {'kind': 'tmux', 'socket': sock, 'pane': pane, 'client': parts[2]}
+                    host = {'kind': 'herdr', 'socket': sock, 'workspace': env.get('HERDR_WORKSPACE_ID', ''), 'tab': env.get('HERDR_TAB_ID', ''), 'pane': env['HERDR_PANE_ID']}
                     break
+    if not shell and not host and env.get('TMUX') and re.fullmatch(r'%\d+', env.get('TMUX_PANE', '')):
+        sock = owned_socket(env['TMUX'].rsplit(',', 2)[0])
+        if sock:
+            pane = env['TMUX_PANE']
+            # Attach only to a client already displaying this pane's session.
+            session = query(['tmux', '-S', sock, 'display-message', '-p', '-t', pane, '#{session_id}']).strip()
+            for line in (query(['tmux', '-S', sock, 'list-clients', '-F', '#{client_pid}\t#{session_id}\t#{client_name}']) if session else '').splitlines():
+                parts = line.split('\t')
+                if len(parts) == 3 and parts[0].isdigit() and parts[1] == session:
+                    cw = window_for(int(parts[0]), procs, windows)
+                    if cw:
+                        w = cw
+                        host = {'kind': 'tmux', 'socket': sock, 'pane': pane, 'client': parts[2]}
+                        break
     return {'address': w['address'], 'title': str(w.get('title', ''))[:100], 'workspace': str(w.get('workspace', {}).get('name', '')), 'host': host} if w else {}
 
 def all_processes():
@@ -179,7 +237,8 @@ def usage(now, then):
 def temperatures():
     package, cores, sensors = None, {}, []
     for h in sorted(Path('/sys/class/hwmon').glob('hwmon*')):
-        if read(h / 'name').strip() != 'coretemp':
+        chip = read(h / 'name').strip()
+        if chip not in ('coretemp', 'k10temp', 'zenpower', 'applesmc'):
             continue
         package_id = None
         for label_file in h.glob('temp*_label'):
@@ -197,7 +256,15 @@ def temperatures():
                 package = value if package is None else max(package, value)
             elif label.startswith('Core '):
                 cores[(package_id, label[5:])] = value
-            sensors.append({'label': label, 'temp': value})
+            elif chip in ('k10temp', 'zenpower', 'applesmc') and not label:
+                label = chip
+                package = value if package is None else max(package, value)
+            elif chip in ('k10temp', 'zenpower', 'applesmc'):
+                # AMD/Apple chips expose Tctl/Tdie-style labels without a
+                # Package id row; treat the hottest reading as the package
+                # fallback so temp still reports without coretemp.
+                package = value if package is None else max(package, value)
+            sensors.append({'label': label or chip, 'temp': value})
     fallback = None
     for z in sorted(Path('/sys/class/thermal').glob('thermal_zone*'), key=lambda z: int(re.sub(r'\D', '', z.name) or 0)):
         kind = read(z / 'type').strip()
@@ -205,7 +272,7 @@ def temperatures():
         if value is None or value <= 0:
             continue
         value /= 1000
-        if kind in ('x86_pkg_temp', 'TCPU', 'cpu-thermal', 'cpu_thermal', 'soc_thermal', 'acpitz', 'CPU'):
+        if kind in ('x86_pkg_temp', 'TCPU', 'cpu-thermal', 'cpu_thermal', 'soc_thermal', 'acpitz', 'CPU', 'k10temp', 'zenpower', 'applesmc', 'arm', 'gpu'):
             fallback = value if fallback is None else fallback
             if kind != 'x86_pkg_temp' or package is None:
                 sensors.append({'label': kind, 'temp': value})
@@ -237,6 +304,28 @@ def frequency():
 PROFILE_TTL = 30
 PROFILE_STAMP = STATE / 'profile-changed'
 _profile = {'value': '', 'at': 0.0, 'stamp': 0.0}
+
+
+def touch_marker(path):
+    # The stamp is opened with O_NOFOLLOW so a symlinked stamp is refused
+    # with ELOOP rather than followed and written through. A deliberate
+    # dotfiles arrangement that symlinks state files keeps working for the
+    # rename(2)-replaced snapshots, but this in-place stamp is refused: the
+    # caller treats that as "no invalidation" and the cached profile simply
+    # expires on PROFILE_TTL instead.
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            return
+        raise
+    try:
+        try:
+            os.futimens(fd, None)
+        except AttributeError:
+            os.utime(fd, None)
+    finally:
+        os.close(fd)
 
 
 def current_profile():
@@ -281,7 +370,10 @@ def metrics(previous=None):
     for line in raw.splitlines():
         parts = line.split()
         if parts and parts[0] in ('ctxt', 'processes', 'procs_running', 'procs_blocked', 'intr'):
-            counters[parts[0]] = int(parts[1])
+            try:
+                counters[parts[0]] = int(parts[1])
+            except (ValueError, IndexError):
+                continue
     rates = {k: max(0, counters.get(k, 0) - previous.get('counters', {}).get(k, counters.get(k, 0))) / elapsed if elapsed > 0 else 0 for k in ('ctxt', 'processes', 'intr')}
     load = read('/proc/loadavg').split()
     try:
@@ -290,21 +382,31 @@ def metrics(previous=None):
         load1 = load5 = load15 = 0.0
     psi = {}
     for line in read('/proc/pressure/cpu').splitlines():
-        parts = line.split()
-        psi[parts[0]] = {k: float(v) for k, v in (s.split('=') for s in parts[1:])}
+        try:
+            parts = line.split()
+            if not parts:
+                continue
+            psi[parts[0]] = {k: float(v) for k, v in (s.split('=') for s in parts[1:])}
+        except (ValueError, IndexError):
+            continue
     freq = frequency()
     known = [c['freq'] for c in cores if c['freq']]
     freq['avg'] = sum(known) / len(known) if known else None
     freq['peak'] = max(known) if known else None
-    throttle = {'package': read_int(SYS_CPU / 'cpu0/thermal_throttle/package_throttle_count') or 0,
-                'core': sum(read_int(f) or 0 for f in SYS_CPU.glob('cpu*/thermal_throttle/core_throttle_count'))}
+    _package_throttle = read_int(SYS_CPU / 'cpu0/thermal_throttle/package_throttle_count')
+    _core_files = list(SYS_CPU.glob('cpu*/thermal_throttle/core_throttle_count'))
+    _core_vals = [read_int(f) for f in _core_files]
+    _core_throttle = sum(_core_vals) if _core_files and all(v is not None for v in _core_vals) else None
+    throttle = {'package': _package_throttle, 'core': _core_throttle}
     # Both counters are cumulative since boot, so the totals only ever grow and
     # say nothing about now: a laptop that throttled once this morning would
     # read as throttling forever. The panel scores the rate instead, smoothed
     # over roughly half a minute so a single event does not spike it to
     # twenty a minute on a three-second tick.
+    # Missing throttle files report None rather than 0 so the panel can tell
+    # "no sensor" apart from "no throttling".
     prev_thr = previous.get('throttle') if previous else None
-    if prev_thr and elapsed > 0:
+    if prev_thr and elapsed > 0 and throttle['package'] is not None and throttle['core'] is not None:
         grew = max(0, (throttle['package'] - (prev_thr.get('package') or 0)) + (throttle['core'] - (prev_thr.get('core') or 0)))
         instant = grew / elapsed * 60
         before = prev_thr.get('perMinute')
@@ -336,10 +438,14 @@ def metrics(previous=None):
             'uptime': float((read('/proc/uptime').split() or ['0'])[0]), 'raw': rows}
 
 def db_open():
-    db = sqlite3.connect(STATE / 'history.sqlite3', timeout=5)
-    db.execute('PRAGMA journal_mode=WAL')
-    db.execute('CREATE TABLE IF NOT EXISTS samples (ts REAL PRIMARY KEY, busy REAL, temp REAL, psi REAL, load REAL, boot TEXT)')
-    return db
+    db = sqlite3.connect(STATE / 'history.sqlite3', timeout=1)
+    try:
+        db.execute('PRAGMA journal_mode=WAL')
+        db.execute('CREATE TABLE IF NOT EXISTS samples (ts REAL PRIMARY KEY, busy REAL, temp REAL, psi REAL, load REAL, boot TEXT)')
+        return db
+    except BaseException:
+        db.close()
+        raise
 
 def record(db, m):
     db.execute('INSERT OR REPLACE INTO samples VALUES (?,?,?,?,?,?)', (m['ts'], m['busyPct'], m['temp'], m['psi'].get('some', {}).get('avg10', 0), m['loadPct'], read('/proc/sys/kernel/random/boot_id').strip()))
@@ -353,11 +459,109 @@ def history(db, seconds, now=None):
     rows = db.execute('SELECT MIN(ts), AVG(busy), MAX(busy), AVG(NULLIF(temp, 0)), MAX(psi), COUNT(*), boot FROM samples WHERE ts>=? AND ts<=? GROUP BY CAST(ts/? AS INTEGER), boot ORDER BY MIN(ts)', (now-seconds, now, bucket)).fetchall()
     return {'seconds': seconds, 'bucket': bucket, 'now': now, 'points': rows, 'count': sum(r[5] for r in rows), 'peak': max((r[2] for r in rows), default=0)}
 
+# State files fall into two classes, and a symlink means a different thing to
+# each. Replaced files are written with tempfile.mkstemp and Path.replace():
+# rename(2) does not follow a symlink at the destination, so it replaces the
+# link itself rather than writing through it. Refusing there would cost a
+# deliberate dotfiles arrangement its setup and buy nothing atomic() has not
+# already bought. snapshot.tmp is the fixed name an older release wrote to; it
+# is listed so an existing one is repaired rather than left at its old mode.
+REPLACED_STATE = ('snapshot.json', 'history.json', 'snapshot.tmp')
+# Opened in place, by path, so a symlink is genuinely followed and written
+# through: sqlite opens the database and its sidecars, and the two locks and
+# the flush stamp are opened directly.
+IN_PLACE_STATE = ('history.sqlite3', 'history.sqlite3-wal', 'history.sqlite3-shm',
+                  'history.sqlite3-journal', 'collector.lock', 'flush.lock', 'last-flush')
+
+
+def inspect_state(directory, name):
+    """Vet one state file without following a link, repairing its mode.
+
+    Returns None when the file is absent or fine, and a reason otherwise. The
+    caller decides what an unsafe file costs, because that differs by file.
+    """
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                     dir_fd=directory)
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        # O_NOFOLLOW reports a symlink as ELOOP. Say what it is rather than
+        # letting a bare errno reach the reader.
+        return 'is a symlink' if e.errno == errno.ELOOP else str(e)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            return 'is not a regular file'
+        if info.st_uid != os.getuid():
+            return 'is owned by another user'
+        if info.st_nlink != 1:
+            return 'has more than one hard link'
+        os.fchmod(fd, 0o600)
+        return None
+    finally:
+        os.close(fd)
+
+
+def prepare_state(strict=True):
+    """Make the state directory private and vet the files in it.
+
+    Returns {name: reason} for files that are not safe to write. Ownership and
+    O_NOFOLLOW on the directory itself are unconditional either way.
+
+    strict=True is the interactive path -- snapshot, focus, flush -- where a
+    person is waiting on the answer and an unsafe in-place file should stop
+    them with a message. The daemon passes strict=False and decides per file:
+    the unit is Restart=on-failure, so raising here would turn one actionable
+    problem into an endless five-second restart cycle.
+    """
+    # The README promises a 0700 directory of 0600 files. mkdir's mode applies
+    # only when it creates the directory, so an existing state directory, or a
+    # file left behind by an older release, keeps whatever mode it already had.
+    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory = os.open(STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    unsafe = {}
+    try:
+        if os.fstat(directory).st_uid != os.getuid():
+            raise RuntimeError('CPU Pulse state directory is not owned by this user.')
+        os.fchmod(directory, 0o700)
+        for name in REPLACED_STATE:
+            reason = inspect_state(directory, name)
+            if reason:
+                unsafe[name] = reason
+        for name in IN_PLACE_STATE:
+            reason = inspect_state(directory, name)
+            if reason:
+                if strict:
+                    raise RuntimeError('Unsafe CPU Pulse state file: ' + name + ' ' + reason)
+                unsafe[name] = reason
+    finally:
+        os.close(directory)
+    return unsafe
+
+# History ranges served to the panel; keep in sync with Model.js RANGES.
+HISTORY_RANGES = (3600, 86400, 604800)
+
 def atomic(name, value):
+    # A fixed .tmp name inherits whatever mode a previous interrupted write
+    # left on it; mkstemp always creates a fresh owner-only file.
     path = STATE / name
-    tmp = path.with_suffix('.tmp')
-    tmp.write_text(json.dumps(value, separators=(',', ':'), ensure_ascii=True))
-    tmp.replace(path)
+    payload = json.dumps(value, separators=(',', ':'), ensure_ascii=True, allow_nan=False)
+    fd, filename = tempfile.mkstemp(prefix='.' + name + '.', suffix='.tmp', dir=STATE)
+    tmp = Path(filename)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        tmp.replace(path)
+        dir_fd = os.open(STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 # ---- demand-driven process scanning ---------------------------------------
 # The per-process walk below is essentially the entire cost of this daemon.
@@ -382,39 +586,93 @@ def processes_wanted():
 
 
 def daemon():
+    # prepare_state() still refuses an unsafe state directory outright --
+    # ownership and O_NOFOLLOW on the directory itself are unconditional even
+    # when strict=False. That refusal must not escape as an exception: the
+    # unit is Restart=on-failure, so exiting nonzero here turns one actionable
+    # problem (a symlinked or foreign-owned state directory) into an endless
+    # five-second restart cycle. Report it and stop quietly instead, the same
+    # way an unsafe collector.lock below does.
+    try:
+        unsafe = prepare_state(strict=False)
+    except (OSError, RuntimeError) as e:
+        print(f'CPU Pulse: not starting, unsafe state directory: {e}', flush=True)
+        return
+    # collector.lock is opened by path and is the first thing this function
+    # touches, so an unsafe one cannot be worked around. Return rather than
+    # raise: the unit is Restart=on-failure, so exiting zero leaves one clear
+    # message in the journal instead of an endless five-second restart cycle.
+    if 'collector.lock' in unsafe:
+        print('CPU Pulse: not starting, collector.lock ' + unsafe['collector.lock'], flush=True)
+        return
+    # An unsafe database costs history, not the whole recorder. This is the
+    # isolation the snapshot loop already applies to a corrupt database: keep
+    # publishing current CPU, and say in the dashboard why history stopped.
+    blocked = sorted(n for n in unsafe if n.startswith('history.sqlite3'))
+    warned = sorted(n for n in unsafe if not n.startswith('history.sqlite3'))
     with (STATE / 'collector.lock').open('w') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return
-        db = db_open()
+        db = None
         previous = None
         ticks = None
         last_history = last_procs = 0
         was_wanted = False
         rows = []
-        while True:
-            start = time.monotonic()
-            try:
-                m = metrics(previous)
-                if m['warm'] and start-last_history >= 15:
-                    record(db, m)
-                    atomic('history.json', {str(s): history(db, s, m['ts']) for s in (3600, 86400, 604800)})
-                    last_history = start
-                wanted = processes_wanted()
-                if wanted and (start-last_procs >= 9 or not was_wanted):
-                    rows, ticks = hogs(ticks, m['monotonic'])
-                    last_procs = start
-                elif not wanted:
-                    rows = []
-                was_wanted = wanted
-                m['hogs'] = rows
-                if m['warm']:
-                    atomic('snapshot.json', m)
-                previous = m
-            except (OSError, sqlite3.Error, RuntimeError, ValueError) as e:
-                print(f'CPU Pulse: {type(e).__name__}: {e}', flush=True)
-            time.sleep(max(0.2, 3-(time.monotonic()-start)))
+        errors = {}
+        if blocked:
+            errors['history'] = '; '.join(n + ' ' + unsafe[n] for n in blocked)
+            print('CPU Pulse history: ' + errors['history'], flush=True)
+        if warned:
+            # Replaced by rename(2), so nothing is written through the link.
+            # Still worth surfacing: the reader chose that layout or did not.
+            errors['state'] = '; '.join(n + ' ' + unsafe[n] for n in warned)
+            print('CPU Pulse state: ' + errors['state'], flush=True)
+        try:
+            while True:
+                start = time.monotonic()
+                try:
+                    m = metrics(previous)
+                    if m['warm'] and start-last_history >= 15 and not blocked:
+                        last_history = start
+                        try:
+                            if db is None:
+                                db = db_open()
+                            record(db, m)
+                            atomic('history.json', {str(s): history(db, s, m['ts']) for s in HISTORY_RANGES})
+                            errors.pop('history', None)
+                        except (OSError, sqlite3.Error, RuntimeError, ValueError) as e:
+                            errors['history'] = str(e)
+                            print(f'CPU Pulse history: {type(e).__name__}: {e}', flush=True)
+                            if db is not None:
+                                db.close()
+                                db = None
+                    wanted = processes_wanted()
+                    if wanted and (start-last_procs >= 9 or not was_wanted):
+                        last_procs = start
+                        try:
+                            rows, ticks = hogs(ticks, m['monotonic'])
+                            errors.pop('processes', None)
+                        except (OSError, RuntimeError, ValueError) as e:
+                            rows = []
+                            errors['processes'] = str(e)
+                            print(f'CPU Pulse processes: {type(e).__name__}: {e}', flush=True)
+                    elif not wanted:
+                        rows = []
+                    was_wanted = wanted
+                    m['hogs'] = rows
+                    m['collectorErrors'] = dict(errors)
+                    if m['warm']:
+                        atomic('snapshot.json', m)
+                    previous = m
+                except (OSError, sqlite3.Error, RuntimeError, ValueError) as e:
+                    print(f'CPU Pulse: {type(e).__name__}: {e}', flush=True)
+                time.sleep(max(0.2, 3-(time.monotonic()-start)))
+        finally:
+            if db is not None:
+                db.close()
 
 def focus(pid, start):
     # Re-read identity and routing on click; an old snapshot cannot focus a
@@ -430,6 +688,10 @@ def focus(pid, start):
     if not current or current['start'] != start or Path(f'/proc/{pid}').stat().st_uid != os.getuid():
         raise RuntimeError('Process exited or identity changed. Refresh the list.')
     host = target.get('host', {})
+    # The socket was valid when the scan read it; re-check at use. A stale
+    # or replaced path degrades to plain window focus, not a failed click.
+    if host.get('socket') and not owned_socket(host['socket']):
+        host = {}
     if host.get('kind') == 'herdr':
         for kind, pattern in [('workspace', r'w[\w-]{1,32}'), ('tab', r'w[\w-]{1,32}:t[\w-]{1,32}'), ('pane', r'w[\w-]{1,32}:p[\w-]{1,32}')]:
             value = host.get(kind, '')
@@ -486,7 +748,7 @@ def profile(name):
         # its next tick instead of up to PROFILE_TTL later.
         try:
             STATE.mkdir(parents=True, exist_ok=True)
-            PROFILE_STAMP.touch()
+            touch_marker(PROFILE_STAMP)
         except OSError:
             pass
     try:
@@ -527,6 +789,9 @@ def main():
             daemon()
             return
         if args.action == 'snapshot':
+            # One-shot rates use a 0.5 s interval while the daemon ticks every
+            # 3 s, so the two rates are measured over different windows and
+            # are not directly comparable.
             first = metrics()
             time.sleep(0.5)
             value = metrics(first)

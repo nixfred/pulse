@@ -35,7 +35,42 @@ here, and is tagged `vX.Y.Z`: a fix bumps the patch, a new capability the minor.
   board power limit essentially always, so the raw total reads as "throttled for
   days" on a perfectly healthy machine. It is scored as a rate, and only when
   the driver reports a reason right now. This is the same trap the CPU domain
-  hit in 1.1.0 and the same corroboration rule the disk domain needed for #1.
+   hit in 1.1.0 and the same corroboration rule the disk domain needed for #1.
+
+## 1.3.1 - 2026-09-19
+
+### Added
+- **The bar shows every checked module, side by side.** Auto (still the
+  default) renders one chip per checked domain — CPU, RAM, Disk, Network and
+  GPU —
+  instead of a single icon following the worst constraint. The worst domain
+  keeps its ▸ marker in the tooltip and the verdict pill, so the constraint is
+  still named without opening anything.
+- **Checkboxes in both places, one saved config.** The right-click chooser and
+  the Settings page edit the same `bar.showCpu` / `bar.showRam` /
+  `bar.showDisk` / `bar.showNet` / `bar.showGpu` flags, persisted in the
+  widget's own
+  `shell.json` entry. Hiding the last module is refused, and touching a
+  checkbox leaves a legacy single-pin for the checked set.
+- **IPC for the checked set.** `omarchy-shell nixfred.pulse barShow <domain>
+  <true|false>` checks or unchecks one module, `showAllBars` checks all,
+  and `status` reports `barKeys` plus the `barVisible` map. `pin` keeps its
+  single-chip behaviour for existing scripts and entries.
+
+### Hardened
+- **The collectors share one safety standard.** CPU, Net and Disk now write
+  snapshots the hardened way (fresh owner-only temp file, no `NaN`, fsync),
+  refuse an unsafe `collector.lock` instead of truncating through it, ignore a
+  relative `XDG_STATE_HOME`, open the history database lazily so a corrupt DB
+  costs history rather than the recorder, and validate Herdr/TMUX sockets plus
+  process ancestry before focusing a window. RAM gains a `MemAvailable`
+  estimate fallback instead of reporting offline.
+- **Smaller robustness fixes.** C-locale subprocess parsing, per-line `/proc`
+  guards, Net ping child reaping with `tcp_stats` guards, Disk exact-class
+  device skipping with local-FUSE treatment and a SMART time budget, installer
+  `umask` with a safe rollback and `python3`-on-PATH units, atomic merge-tool
+  writes, and IPC input validation (`show`, `showTab`, `barShow`, `panelWidth`)
+  with `safeParse` status reporting on the panel side.
 
 ## 1.2.0 - 2026-09-15
 

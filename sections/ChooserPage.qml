@@ -83,11 +83,47 @@ Item {
         Column {
             width: parent.width
             spacing: 3
-            Heading { text: 'WHAT THE ICON SHOWS'; font.letterSpacing: 1.5 }
+            Heading { text: 'BAR MODULES'; font.letterSpacing: 1.5 }
             Label {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: 'One icon, and by default it is not a fixed reading — it follows whichever of the five is most constrained and tells you which one that is. Pin any readout below to stop it moving.'
+                text: 'Check what lives on the bar. Every checked module gets its own chip, side by side — saved, so the set survives restarts.'
+            }
+        }
+
+        Repeater {
+            model: host.domains
+            Choice {
+                required property var modelData
+                required property int index
+                readonly property string key: host.domainKeys[index]
+                width: column.width
+                accent: modelData.tint
+                selected: host.isBarShown(key)
+                text: (host.isBarShown(key) ? '☑  ' : '☐  ') + modelData.sectionTitle + ' on the bar'
+                trailing: modelData.stale ? 'offline' : modelData.headline + ' ' + modelData.tag
+                onClicked: host.setBarShown(key, !host.isBarShown(key))
+            }
+        }
+        Choice {
+            width: parent.width
+            visible: !host.barAuto || host.barKeys.length < host.domainKeys.length
+            text: host.barAuto ? 'Show all  →' : 'Back to checked modules (auto)  →'
+            trailing: host.barAuto ? '' : (host.barDomain ? host.barDomain.sectionTitle : '')
+            onClicked: {
+                if (host.barAuto) host.showAllBars()
+                else host.pinBar('auto', null)
+            }
+        }
+
+        Column {
+            width: parent.width
+            spacing: 3
+            Heading { text: 'PIN ONE READOUT'; font.letterSpacing: 1.5 }
+            Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: 'By default the bar shows every checked module. Pin one readout below to show a single chip that stays put — Auto returns to the checked set.'
             }
         }
 
@@ -96,8 +132,8 @@ Item {
             implicitHeight: 46
             accent: host.barDomain ? host.barDomain.tint : root.ink
             selected: host.barAuto
-            text: 'Auto  ·  follow the biggest constraint'
-            trailing: host.barDomain ? host.barDomain.sectionTitle.toUpperCase() + ' ' + host.barDomain.headline : '—'
+            text: 'Auto  ·  show the checked modules'
+            trailing: host.barCells.map(function (d) { return d.sectionTitle.toUpperCase() + ' ' + d.headline }).join('   ·   ') || '—'
             onClicked: host.pinBar('auto', null)
         }
         Label {

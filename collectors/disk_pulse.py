@@ -25,6 +25,9 @@ SYS_BLOCK = Path('/sys/class/block')
 SYS_BTRFS = Path('/sys/fs/btrfs')
 # Pseudo and in-memory filesystems: never a place your files live, so never a
 # row in the dashboard. Everything else that is mounted is shown.
+# zfs is deliberately NOT here: it is real on-disk storage with real
+# capacity, unlike tmpfs/overlay/squashfs. Keep it listed as a local
+# filesystem so pools report usage.
 PSEUDO_FS = {'proc', 'sysfs', 'tmpfs', 'devtmpfs', 'devpts', 'cgroup', 'cgroup2', 'pstore', 'bpf',
              'securityfs', 'debugfs', 'tracefs', 'configfs', 'fusectl', 'hugetlbfs', 'mqueue',
              'binfmt_misc', 'autofs', 'efivarfs', 'ramfs', 'nsfs', 'rpc_pipefs', 'selinuxfs',
@@ -42,7 +45,22 @@ REMOTE_DEADLINE = 1.5
 REMOTE_GRACE = 10.0
 # Devices that are not storage of yours: compressed swap, loop-mounted
 # images, the RAM disks, network block devices and optical drives.
+# Matched as an exact device class with an optional numeric suffix, not as a
+# string prefix: startswith('md') would also skip 'mdadm' or any future
+# 'md'-prefixed non-RAID node, and startswith('loop') would skip a 'loopback'
+# alias. Only kernel classes loopN, ramN, zramN, nbdN, srN, fdN, md and mdN
+# are skipped.
 SKIP_DISKS = ('loop', 'ram', 'zram', 'nbd', 'sr', 'fd', 'md')
+SKIP_DISK_RE = re.compile(r'(loop|ram|zram|nbd|sr|fd)\d*|md\d*|md')
+
+
+def skip_disk(name):
+    """True when a /sys/class/block leaf is a non-storage device class.
+
+    Exact-class match (fullmatch) with an optional unit number: 'loop0' and
+    'loop' skip, 'loopback' does not; 'md', 'md0' skip, 'mdadm' does not.
+    """
+    return bool(SKIP_DISK_RE.fullmatch(name))
 BTRFS_PROFILES = ('single', 'dup', 'raid0', 'raid1', 'raid1c3', 'raid1c4', 'raid10', 'raid5', 'raid6')
 
 def read(path):
@@ -67,9 +85,12 @@ def fields(raw):
             pass
     return result
 
+C_LOCALE = dict(os.environ, LC_ALL='C', LANG='C')
+
+
 def run(args, timeout=2):
     try:
-        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False, env=C_LOCALE)
         return p.stdout if p.returncode == 0 else ''
     except (OSError, UnicodeError, subprocess.TimeoutExpired):
         return ''
@@ -132,6 +153,34 @@ def window_for(pid, procs, windows):
         pid = procs.get(pid, {}).get('ppid', 0)
     return None
 
+def owned_socket(path):
+    # Herdr/TMUX socket paths come from the target process's own environment,
+    # so they are attacker-influenced. Only a path that is currently a socket
+    # owned by this user is usable; anything else degrades to plain window
+    # focus rather than failing the click.
+    try:
+        info = os.stat(path)
+    except (OSError, ValueError, TypeError):
+        return ''
+    if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+        return ''
+    return path
+
+def related(a, b, procs):
+    # A window title is attacker-reproducible: any same-user client can set
+    # its title to match. A focus target the process tree cannot relate to
+    # the target process is title-only evidence. Either direction counts, so
+    # a terminal emulator above the shell and a helper below it both bind.
+    for start, goal in ((a, b), (b, a)):
+        seen = set()
+        pid = start
+        while isinstance(pid, int) and pid > 1 and pid not in seen:
+            if pid == goal:
+                return True
+            seen.add(pid)
+            pid = procs.get(pid, {}).get('ppid', 0)
+    return False
+
 def target_for(p, procs, wins, query=None):
     query = run if query is None else query
     windows = {c['pid']: c for c in wins}
@@ -140,36 +189,44 @@ def target_for(p, procs, wins, query=None):
     host = {}
     # Boomux terminal titles carry an exact shell id. Focusing that existing
     # window needs no launcher and cannot create or terminate a session.
+    # Titles alone do not bind a window to a shell -- any same-user client
+    # can set its title -- so a candidate whose window process the tree
+    # relates to the target wins over one that merely matches the title. The
+    # title-only fallback stays for multiplexer layouts where the window and
+    # the shell share no ancestry, where no better binding is available.
     shell = env.get('BOOMUX_SHELL_ID', '')
-    if shell:
+    if shell and re.fullmatch(r'\S{1,64}', shell):
         match = [c for c in wins if str(c.get('title', '')).startswith('boomux:shell:') and str(c.get('title', '')).split(' ')[0].endswith(':' + shell)]
         if match:
-            w = match[0]
+            kin = [c for c in match if isinstance(c.get('pid'), int) and related(p['pid'], c['pid'], procs)]
+            w = kin[0] if kin else match[0]
     if not shell and env.get('HERDR_ENV') == '1' and env.get('HERDR_PANE_ID'):
-        sock = env.get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock')
-        for q in procs.values():
-            if q['name'] != 'herdr':
-                continue
-            cw = window_for(q['pid'], procs, windows)
-            ce = environment(q['pid'])
-            cs = ce.get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock')
-            if cw and cs == sock:
-                w = cw
-                host = {'kind': 'herdr', 'socket': sock, 'workspace': env.get('HERDR_WORKSPACE_ID', ''), 'tab': env.get('HERDR_TAB_ID', ''), 'pane': env['HERDR_PANE_ID']}
-                break
-    if not shell and not host and env.get('TMUX') and re.fullmatch(r'%\d+', env.get('TMUX_PANE', '')):
-        sock = env['TMUX'].rsplit(',', 2)[0]
-        pane = env['TMUX_PANE']
-        # Attach only to a client already displaying this pane's session.
-        session = query(['tmux', '-S', sock, 'display-message', '-p', '-t', pane, '#{session_id}']).strip()
-        for line in (query(['tmux', '-S', sock, 'list-clients', '-F', '#{client_pid}\t#{session_id}\t#{client_name}']) if session else '').splitlines():
-            parts = line.split('\t')
-            if len(parts) == 3 and parts[0].isdigit() and parts[1] == session:
-                cw = window_for(int(parts[0]), procs, windows)
-                if cw:
+        sock = owned_socket(env.get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock'))
+        if sock:
+            for q in procs.values():
+                if q['name'] != 'herdr':
+                    continue
+                cw = window_for(q['pid'], procs, windows)
+                ce = environment(q['pid'])
+                cs = ce.get('HERDR_SOCKET_PATH') or str(Path.home() / '.config/herdr/herdr.sock')
+                if cw and cs == sock:
                     w = cw
-                    host = {'kind': 'tmux', 'socket': sock, 'pane': pane, 'client': parts[2]}
+                    host = {'kind': 'herdr', 'socket': sock, 'workspace': env.get('HERDR_WORKSPACE_ID', ''), 'tab': env.get('HERDR_TAB_ID', ''), 'pane': env['HERDR_PANE_ID']}
                     break
+    if not shell and not host and env.get('TMUX') and re.fullmatch(r'%\d+', env.get('TMUX_PANE', '')):
+        sock = owned_socket(env['TMUX'].rsplit(',', 2)[0])
+        if sock:
+            pane = env['TMUX_PANE']
+            # Attach only to a client already displaying this pane's session.
+            session = query(['tmux', '-S', sock, 'display-message', '-p', '-t', pane, '#{session_id}']).strip()
+            for line in (query(['tmux', '-S', sock, 'list-clients', '-F', '#{client_pid}\t#{session_id}\t#{client_name}']) if session else '').splitlines():
+                parts = line.split('\t')
+                if len(parts) == 3 and parts[0].isdigit() and parts[1] == session:
+                    cw = window_for(int(parts[0]), procs, windows)
+                    if cw:
+                        w = cw
+                        host = {'kind': 'tmux', 'socket': sock, 'pane': pane, 'client': parts[2]}
+                        break
     return {'address': w['address'], 'title': str(w.get('title', ''))[:100], 'workspace': str(w.get('workspace', {}).get('name', '')), 'host': host} if w else {}
 
 def io_counters(pid):
@@ -241,6 +298,10 @@ def hogs(previous=None, now=None, scan=None):
     rows = live[:24]
     for p in rows:
         p['target'] = target_for(p, procs, wins, query) if p['owned'] else {}
+    # Prune here by returning only current: the daemon replaces its counters
+    # with this return value each tick (rows, counters = hogs(counters, ...))
+    # and never merges, so keys for exited processes are dropped rather than
+    # accumulating across the recorder's lifetime.
     return rows, current
 
 def unescape(text):
@@ -317,7 +378,11 @@ def mounts(raw=None):
         superopts = t[2] if len(t) > 2 else ''
         if fstype in PSEUDO_FS or hidden(mount):
             continue
-        remote = fstype in NETWORK_FS or (fstype.startswith('fuse') and fstype != 'fuseblk')
+        # Only listed fuse types are remote (fuse.sshfs, fuse.rclone, ...).
+        # Unknown fuse.* (fuse.mergerfs, fuse.bindfs, plain app fuses) is
+        # local storage: probing it on a helper thread would only add latency,
+        # while treating it as local keeps it on the fast statvfs path.
+        remote = fstype in NETWORK_FS or (fstype.startswith('fuse.') and fstype in NETWORK_FS)
         key = dev if not remote else dev + ':' + source
         options = set(opts.split(',')) | set(superopts.split(','))
         compress = next((o.partition('=')[2] or 'yes' for o in options if o == 'compress' or o.startswith('compress=') or o.startswith('compress-force=')), '')
@@ -344,6 +409,34 @@ def mounts(raw=None):
     out = [rows[k] for k in order]
     for row in out:
         row['also'].sort()
+    if not out:
+        # Container overlay root: '/' itself is typically 'overlay', which is
+        # in PSEUDO_FS because host overlays are never a place your files
+        # live. But when it is the only filesystem (container, diskless or
+        # mount-namespace view), an empty dashboard is worse than one
+        # unmeasured row: fall back to the '/' mount itself and let usage()
+        # mark it responsive=false until statvfs answers.
+        for line in raw.splitlines():
+            head, sep, tail = line.partition(' - ')
+            h, t = head.split(), tail.split()
+            if not sep or len(h) < 6 or len(t) < 2:
+                continue
+            mount = unescape(h[4])
+            if mount != '/':
+                continue
+            fstype, source = t[0], unescape(t[1])
+            superopts = t[2] if len(t) > 2 else ''
+            opts = h[5]
+            options = set(opts.split(',')) | set(superopts.split(','))
+            name = device_name(source)
+            out.append({'mount': '/', 'also': [], 'fstype': fstype, 'source': source,
+                        'remote': False, 'device': physical_of(name) if name else '',
+                        'block': name, 'encrypted': encrypted(name) if name else False,
+                        'readonly': 'ro' in opts.split(','), 'compress': '',
+                        'subvol': next((o[7:] for o in options if o.startswith('subvol=')), ''),
+                        'flags': sorted(o for o in ('ssd', 'discard', 'noatime', 'autodefrag', 'degraded') if o in options),
+                        'responsive': False})
+            break
     return out
 
 class RemoteProbe:
@@ -501,7 +594,7 @@ def disks(previous=None, now=None):
     out = []
     for base in sorted(SYS_BLOCK.iterdir()):
         name = base.name
-        if name.startswith(SKIP_DISKS) or not (base / 'device').exists() or (base / 'partition').exists():
+        if skip_disk(name) or not (base / 'device').exists() or (base / 'partition').exists():
             continue
         size = read_int(base / 'size') * SECTOR
         if size <= 0:
@@ -685,6 +778,11 @@ def smart(query=None):
     persists a serial number.
     """
     query = busctl if query is None else query
+    # Hard budget for the whole slow job: busctl already caps each drive at
+    # timeout=4, but twelve drives at 4 s each would stall the sampling loop.
+    # Past the 8 s deadline the remaining per-drive SmartGetAttributes calls
+    # are skipped; those drives keep their basic info without extended attrs.
+    deadline = time.monotonic() + 8
     objects = query(['call', 'org.freedesktop.UDisks2', '/org/freedesktop/UDisks2', 'org.freedesktop.DBus.ObjectManager', 'GetManagedObjects'])
     if not objects or not isinstance(objects, list) or not isinstance(objects[0], dict):
         return {}
@@ -714,7 +812,10 @@ def smart(query=None):
                         powerOnHours=hours if hours > 0 else None, warnings=[str(w) for w in warnings],
                         selftest=str(nvme.get('SmartSelftestStatus', '')), updated=nvme.get('SmartUpdated'),
                         revision=str(nvme.get('NVMeRevision', '')))
-            attrs = query(['call', 'org.freedesktop.UDisks2', path, 'org.freedesktop.UDisks2.NVMe.Controller', 'SmartGetAttributes', 'a{sv}', '0'])
+            if time.monotonic() < deadline:
+                attrs = query(['call', 'org.freedesktop.UDisks2', path, 'org.freedesktop.UDisks2.NVMe.Controller', 'SmartGetAttributes', 'a{sv}', '0'])
+            else:
+                attrs = None
             if attrs and isinstance(attrs, list) and isinstance(attrs[0], dict):
                 a = attrs[0]
                 info.update(percentUsed=a.get('percent_used'), spare=a.get('avail_spare'), spareThreshold=a.get('spare_thresh'),
@@ -920,7 +1021,55 @@ def atomic(name, value):
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as stream:
             stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
         tmp.replace(path)
+        dir_fd = os.open(STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def touch_marker(path):
+    # The stamp is opened with O_NOFOLLOW so a symlinked stamp is refused
+    # with ELOOP rather than followed and written through. The caller treats
+    # that as "no invalidation" rather than an error.
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            return
+        raise
+    try:
+        try:
+            os.futimens(fd, None)
+        except AttributeError:
+            os.utime(fd, None)
+    finally:
+        os.close(fd)
+
+
+def write_last_flush(value):
+    # last-flush is replaced atomically (mkstemp + rename) so a crash never
+    # leaves a half-written stamp; rename(2) replaces a symlink at the
+    # destination rather than writing through it.
+    path = STATE / 'last-flush'
+    fd, filename = tempfile.mkstemp(prefix='.last-flush.', suffix='.tmp', dir=STATE)
+    tmp = Path(filename)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        tmp.replace(path)
+        dir_fd = os.open(STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -935,6 +1084,9 @@ def atomic(name, value):
 # or a stale one, means nothing is looking and the walk is skipped. History is
 # unaffected: it is recorded from the metrics before the process table is ever
 # attached.
+# Any local process can touch this marker and force one extra scan per tick;
+# that is accepted by design: it is a panel-only optimization, and the worst
+# case is a wasted scan, never a privilege or data issue.
 WANT_PROCESSES = STATE / 'want-processes'
 WANT_TTL = 30
 
@@ -1046,6 +1198,10 @@ def focus(pid, start):
     if not target:
         raise RuntimeError('No existing window or attached session for this process.')
     host = target.get('host', {})
+    # The socket was valid when the scan read it; re-check at use. A stale
+    # or replaced path degrades to plain window focus, not a failed click.
+    if host.get('socket') and not owned_socket(host['socket']):
+        host = {}
     if host.get('kind') == 'herdr':
         for kind, pattern in [('workspace', r'w[\w-]{1,32}'), ('tab', r'w[\w-]{1,32}:t[\w-]{1,32}'), ('pane', r'w[\w-]{1,32}:p[\w-]{1,32}')]:
             value = host.get(kind, '')
@@ -1093,11 +1249,18 @@ def flush():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError('A flush is already in progress.')
-        last = float(read(STATE / 'last-flush') or 0)
+        try:
+            last = float(read(STATE / 'last-flush') or 0)
+        except (ValueError, TypeError):
+            last = 0
         if time.time()-last < 60:
             raise RuntimeError('Wait one minute between flushes.')
         before = fields(read('/proc/meminfo'))
-        (STATE / 'last-flush').write_text(str(time.time()))
+        # O_NOFOLLOW probe (cf. touch_marker): a symlinked stamp is refused
+        # with ELOOP rather than followed; the atomic replace below then
+        # swaps the link itself via rename(2) instead of writing through it.
+        touch_marker(STATE / 'last-flush')
+        write_last_flush(str(time.time()))
         started = time.monotonic()
         os.sync()
         after = fields(read('/proc/meminfo'))

@@ -2,15 +2,19 @@
 Description=Pulse: continuous storage history
 After=graphical-session.target
 PartOf=graphical-session.target
+# Units run under graphical-session.target; headless/SSH installs stay inactive until a graphical session (documented behavior).
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/nixfred.pulse/collectors/disk_pulse.py daemon
+ExecStart=python3 %h/.config/omarchy/plugins/nixfred.pulse/collectors/disk_pulse.py daemon
 Restart=on-failure
 RestartSec=5
 UMask=0077
 Nice=10
 NoNewPrivileges=yes
+MemoryMax=150M
+CPUQuota=30%
+PrivateTmp=yes
 
 [Install]
 WantedBy=graphical-session.target

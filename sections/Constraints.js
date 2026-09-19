@@ -53,6 +53,19 @@ function band(severity) {
     return severity >= HIGH ? 'critical' : severity >= MEDIUM ? 'tight' : severity >= LOW ? 'noticeable' : 'comfortable'
 }
 
+// Severity -> display colour for the Constraints page. Kept here (audit #23)
+// so the page never hardcodes its own rgba ramps and the bar/page agree.
+// LOW/MEDIUM thresholds mirror band(); HIGH uses the theme urgent colour
+// passed in by the caller (urgent), with a safe red fallback for tests.
+function bandColor(severity, urgent, ink) {
+    var u = urgent || '#e5484d'
+    if (severity >= HIGH) return u
+    if (severity >= MEDIUM) return '#eaa324'  // amber: tight
+    if (severity >= LOW) return '#d9cc59'     // pale yellow: noticeable
+    // Comfortable: dimmed ink or a fixed mid-grey when no ink is supplied.
+    return ink !== undefined && ink !== null ? ink : '#8a9aa3'
+}
+
 function entry(key, label, value, detail, severity, informational) {
     var s = Math.min(clamp01(severity), CEILING)
     // An informational row still shows and still sorts, but it can never be

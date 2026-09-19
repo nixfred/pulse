@@ -6,6 +6,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "NetModel.js" as Model
+import "../Model.js" as Pulse
 import "Constraints.js" as Constraints
 
 // Network section of Pulse — the whole of nixfred.net-pulse's dashboard, hosted
@@ -56,7 +57,7 @@ Item {
     readonly property int ifaceColumns: Math.max(2, Math.min(6, Math.floor((root.width + 12) / 400)))
     readonly property int wifiColumns: Math.max(2, Math.min(4, Math.floor((root.width + 12) / 620)))
     readonly property string stateDir: (Quickshell.env('XDG_STATE_HOME') || Quickshell.env('HOME')+'/.local/state')+'/net-pulse'
-    readonly property string helper: String(Qt.resolvedUrl('../collectors/net_pulse.py')).replace(/^file:\/\//,'')
+    readonly property string helper: Pulse.filePath(Qt.resolvedUrl('../collectors/net_pulse.py'))
     property var net: ({})
     property var histories: ({})
     property var usages: ({})
@@ -67,8 +68,12 @@ Item {
     property int usageRange: 86400
     property bool chooseMode: false
     property string actionStatus: ''
+    // Status lines expire after 8s (audit #20), mirroring the merged Panel.
+    onActionStatusChanged: if (actionStatus !== '') statusExpiry.restart()
+    Timer { id: statusExpiry; interval: 8000; onTriggered: if (root.actionStatus !== '') root.actionStatus = '' }
     property real now: Date.now()/1000
-    readonly property bool stale: !net.ts || now-net.ts > 12
+    // Unified 15s stale threshold (audit #29): was 12s, now matches CPU/RAM/Disk.
+    readonly property bool stale: !net.ts || now-net.ts > Pulse.STALE_NET_S
     readonly property int mode: Model.clamp(setting('displayMode',0),0,4)
     readonly property real health: stale ? 50 : Model.health(net)
     // The link ramp takes the theme's own red, yellow and green. The shell
@@ -90,14 +95,19 @@ Item {
     readonly property var iface: net.iface || {}
     // Identity for the About tab. manifest.json is the single source of truth
     // for all three, so bumping a version or moving the repo is one edit there;
-    // the constants are only the fallback for when the registry is unreachable.
+    // the registry entry wins where the shell exposes it, the file beside this
+    // one fills in otherwise (audit #18). No hardcoded version strings.
     readonly property var pluginManifest: {
         var reg = bar && bar.shell ? bar.shell.pluginRegistry : null
         return reg && reg.installedPlugins ? (reg.installedPlugins[root.moduleName] || null) : null
     }
-    readonly property string version: pluginManifest && pluginManifest.version ? String(pluginManifest.version) : '1.4.0'
-    readonly property string repoUrl: pluginManifest && pluginManifest.repository ? String(pluginManifest.repository) : 'https://github.com/nixfred/omanet.plugin.omarchy'
-    readonly property string siteUrl: pluginManifest && pluginManifest.homepage ? String(pluginManifest.homepage) : 'https://nixfred.com'
+    property var fileManifest: null
+    // Same resolution everywhere (audit #18): registry entry wins, the
+    // manifest file beside the plugin fills in, hardcoded URLs are last.
+    readonly property var resolvedManifest: root.pluginManifest || root.fileManifest
+    readonly property string version: Pulse.resolveVersion(root.pluginManifest, root.fileManifest)
+    readonly property string repoUrl: root.resolvedManifest && root.resolvedManifest.repository ? String(root.resolvedManifest.repository) : 'https://github.com/nixfred/omanet.plugin.omarchy'
+    readonly property string siteUrl: root.resolvedManifest && root.resolvedManifest.homepage ? String(root.resolvedManifest.homepage) : 'https://nixfred.com'
 
     // ---- Theme surfaces. The dashboard follows the Omarchy theme: the popup
     // roles for background and text, the accent for anything interactive, and
@@ -117,7 +127,7 @@ Item {
     readonly property color accentSurface: Model.mix(panelBg, themeAccent, 0.12)
     readonly property color accentBorder: Model.mix(panelBg, themeAccent, 0.34)
     readonly property color accentHot: Model.mix(themeAccent, panelText, 0.45)
-    readonly property color cardBorder: Model.mix(panelBg, Color.popups.border, 0.5)
+    readonly property color cardBorder: Model.mix(panelBg, Pulse.role(Color.popups, 'border', '#2c3f4a'), 0.5)
     readonly property color hairline: Model.mix(panelBg, panelText, 0.17)
     readonly property color hairlineHot: Model.mix(panelBg, panelText, 0.33)
     readonly property color gridLine: Model.mix(panelBg, panelText, 0.12)
@@ -254,24 +264,31 @@ Item {
         return JSON.stringify({version:version,opened:opened,mode:mode,readout:Model.readout(net,mode),tint:String(tint),stale:stale,online:!!net.online,health:health,iface:iface.name||'',kind:chipKind,ssid:wifi.ssid||'',rx:(net.rates||{}).rx||0,tx:(net.rates||{}).tx||0,latency:ping.internet,samples:chart.count||0,tab:tab,chooseMode:chooseMode,networks:wifiRows.length,interfaces:(net.interfaces||[]).length,talkers:rows.length,wifiAction:wifiKind,action:actionStatus,usageRange:usageRange,usedRx:usageChart.totalRx||0,usedTx:usageChart.totalTx||0,usedFor:usageChart.recorded||0})
     }
     onOpenedChanged: { if(opened){ snapshotFile.reload(); historyFile.reload(); usageFile.reload() } syncScanner() }
-    onTabChanged: { page=0; wifiPage=0; syncScanner(); if(panel && scroller) scroller.contentY=0 }
+    // Audit #3: the old `if(panel && scroller)` reached into the host Panel's
+    // ids, which are out of scope here and silently never reset. Route through
+    // the host's resetScroll() instead.
+    onTabChanged: { page=0; wifiPage=0; syncScanner(); if (host && host.resetScroll) host.resetScroll() }
     onChooseModeChanged: syncScanner()
     onWifiDeviceChanged: syncScanner()
     Component.onDestruction: if(scanDevice) scanDevice.scannerEnabled=false
     FileView {
         id:snapshotFile; path:root.stateDir+'/snapshot.json'; watchChanges:true; printErrors:false
         onFileChanged:reload()
-        onLoaded:{try{var m=JSON.parse(text());if(m.ts>0)root.net=m}catch(e){}}
+        onLoaded:{try{var m=Pulse.safeParse(text(),null);if(m&&m.ts>0)root.net=m}catch(e){}}
     }
     FileView {
         id:historyFile; path:root.stateDir+'/history.json'; watchChanges:true; printErrors:false
         onFileChanged:reload()
-        onLoaded:{try{root.histories=JSON.parse(text())}catch(e){}}
+        onLoaded:{try{var h=Pulse.safeParse(text(),null);if(h)root.histories=h}catch(e){}}
     }
     FileView {
         id:usageFile; path:root.stateDir+'/usage.json'; watchChanges:true; printErrors:false
         onFileChanged:reload()
-        onLoaded:{try{root.usages=JSON.parse(text())}catch(e){}}
+        onLoaded:{try{var u=Pulse.safeParse(text(),null);if(u)root.usages=u}catch(e){}}
+    }
+    FileView {
+        id:manifestFile; path:Pulse.filePath(Qt.resolvedUrl('../manifest.json')); printErrors:false
+        onLoaded:{try{var m=Pulse.safeParse(text(),null);if(m&&typeof m==='object')root.fileManifest=m}catch(e){}}
     }
     FileView {
         // The theme's own palette file. watchChanges covers a theme edited in
@@ -353,9 +370,9 @@ Item {
     readonly property var topConstraints: root.constraints.slice(0, 3)
     readonly property string headline: root.stale ? '—' : Model.readout(root.net, root.mode)
     readonly property string tag: Model.modeTag(root.net, root.mode)
-    property Component barChip: Component { NetChip {compact:true;body:root.barTransparent?'transparent':Color.bar.background;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.barTint;stops:root.rampStops;animate:!root.stale && root.setting('animated',true)} }
-    property Component cardChip: Component { NetChip {width:88;height:88;body:Color.popups.background;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint;stops:root.rampStops;animate:root.cardLive} }
-    property Component cardGraph: Component { NetHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;latencyTint:root.themeUrgent;upTint:root.themeAccent;axisText:root.dimText;gridLine:root.gridLine;tipBackground:Color.tooltip.background;tipBorder:Color.tooltip.border;tipText:Color.tooltip.text} }
+    property Component barChip: Component { NetChip {compact:true;body:root.barTransparent?'transparent':Pulse.role(Color.bar, 'background', '#10181d');kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.barTint;stops:root.rampStops;panelOpen:host.opened;animate:!root.stale && root.setting('animated',true)} }
+    property Component cardChip: Component { NetChip {width:88;height:88;body:Pulse.role(Color.popups, 'background', '#10181d');kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint;stops:root.rampStops;panelOpen:host.opened;animate:root.cardLive} }
+    property Component cardGraph: Component { NetHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;latencyTint:root.themeUrgent;upTint:root.themeAccent;axisText:root.dimText;gridLine:root.gridLine;tipBackground:Pulse.role(Color.tooltip, 'background', '#17232d');tipBorder:Pulse.role(Color.tooltip, 'border', '#40525f');tipText:Pulse.role(Color.tooltip, 'text', '#edf5f7')} }
 
     component Label: Text { color:root.bodyText;font.pixelSize:12;textFormat:Text.PlainText }
     component Heading: Text { color:root.panelText;font.pixelSize:15;font.bold:true;textFormat:Text.PlainText }
@@ -470,7 +487,7 @@ Item {
                     Rectangle {
                         width:parent.width;height:170;radius:16;border.color:Qt.alpha(root.tint,0.45)
                         gradient:Gradient {GradientStop{position:0;color:Qt.alpha(root.tint,0.13)}GradientStop{position:1;color:root.surface}}
-                        NetChip {x:12;y:5;width:160;height:160;body:root.surfaceRaised;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint;stops:root.rampStops;animate:root.opened&&root.tab===0&&!root.stale&&root.setting('animated',true)}
+                        NetChip {x:12;y:5;width:160;height:160;body:root.surfaceRaised;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint;stops:root.rampStops;panelOpen:host.opened;animate:root.opened&&root.tab===0&&!root.stale&&root.setting('animated',true)}
                         Column {x:188;y:18;spacing:5;width:parent.width-330
                             Label{text:'DOWNLOAD  ·  UPLOAD';font.pixelSize:11;font.letterSpacing:2}
                             Row {spacing:14
@@ -502,7 +519,7 @@ Item {
                                 }
                             }
                             NetHistoryGraph{width:parent.width;height:139;historyData:root.chart;tint:root.tint
-                            latencyTint:root.themeUrgent;upTint:root.themeAccent;axisText:root.dimText;gridLine:root.gridLine;tipBackground:Color.tooltip.background;tipBorder:Color.tooltip.border;tipText:Color.tooltip.text}
+                            latencyTint:root.themeUrgent;upTint:root.themeAccent;axisText:root.dimText;gridLine:root.gridLine;tipBackground:Pulse.role(Color.tooltip, 'background', '#17232d');tipBorder:Pulse.role(Color.tooltip, 'border', '#40525f');tipText:Pulse.role(Color.tooltip, 'text', '#edf5f7')}
                             Row{spacing:14
                                 Label{text:'━ Download';color:root.tint;font.pixelSize:10}
                                 Label{text:'━ Upload';color:root.themeAccent;font.pixelSize:10}
@@ -736,7 +753,7 @@ Item {
                     }
                     Rectangle{width:parent.width;height:184;radius:14;color:root.surface;border.color:root.hairline
                         UsageGraph{anchors.fill:parent;anchors.margins:11;usageData:root.usageChart;tint:root.tint
-                            baseLine:root.hairline;upTint:root.themeAccent;axisText:root.dimText;gridLine:root.gridLine;tipBackground:Color.tooltip.background;tipBorder:Color.tooltip.border;tipText:Color.tooltip.text
+                            baseLine:root.hairline;upTint:root.themeAccent;axisText:root.dimText;gridLine:root.gridLine;tipBackground:Pulse.role(Color.tooltip, 'background', '#17232d');tipBorder:Pulse.role(Color.tooltip, 'border', '#40525f');tipText:Pulse.role(Color.tooltip, 'text', '#edf5f7')
                             visible:(root.usageChart.points||[]).length>0}
                         Label{anchors.centerIn:parent;visible:(root.usageChart.points||[]).length===0
                             text:'Nothing recorded in '+Model.rangeWhen(root.usageRange)+' yet.'}
@@ -842,7 +859,7 @@ Item {
                     Rectangle{width:parent.width;height:aboutCol.implicitHeight+28;radius:14;color:root.surfaceRaised;border.color:root.cardBorder
                         Column{id:aboutCol;anchors.fill:parent;anchors.margins:14;spacing:12
                             Row{width:parent.width;spacing:14
-                                NetChip{width:64;height:64;body:root.surfaceRaised;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint
+                                NetChip{width:64;height:64;body:root.surfaceRaised;kind:root.chipKind;level:root.health/100;activity:root.activity;tint:root.tint;panelOpen:host.opened
                                     animate:root.opened&&root.tab===6&&!root.stale&&root.setting('animated',true)}
                                 Column{anchors.verticalCenter:parent.verticalCenter;spacing:5
                                     Heading{text:'Net Pulse';font.pixelSize:20;font.letterSpacing:2}

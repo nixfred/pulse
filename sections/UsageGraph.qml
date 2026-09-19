@@ -17,18 +17,22 @@ Item {
     property color tipBackground: '#17232d'
     property color tipBorder: '#40525f'
     property color tipText: '#edf5f7'
+    property string fontFamily: 'sans-serif'
     property int hoverIndex: -1
+    // Clicking pins the hover chip (audit #28); moves do not retarget while pinned.
+    property bool hoverPinned: false
     readonly property int leftAxis: 56
     readonly property int rightPad: 8
     readonly property var points: usageData && usageData.points ? usageData.points : []
     readonly property var hoverPoint: hoverIndex >= 0 && hoverIndex < points.length ? points[hoverIndex] : null
     readonly property real bucket: Math.max(1, usageData.bucket || 60)
     readonly property real span: Math.max(bucket, (usageData.now || 0) - (usageData.start || 0))
-    readonly property real ceiling: Model.niceMax(usageData.peak || 0)
+    // Audit #16: ceiling at least 1 so an empty range never divides by zero.
+    readonly property real ceiling: Math.max(1, Model.niceMax(usageData.peak || 0))
     // Usage lands every 15s whether or not anyone is looking. Painting for a
     // closed dashboard is wasted; the bars catch up on becoming visible.
     function repaint() { if (root.visible) graph.requestPaint() }
-    onUsageDataChanged: { hoverIndex = -1; repaint() }
+    onUsageDataChanged: { hoverIndex = -1; hoverPinned = false; repaint() }
     onTintChanged: repaint()
     onVisibleChanged: repaint()
     function plotWidth() { return Math.max(1, width - leftAxis - rightPad) }
@@ -61,7 +65,7 @@ Item {
         onPaint: {
             var c = getContext('2d'), w = root.plotWidth(), h = height - 26, x0 = root.leftAxis, base = h
             c.reset(); c.clearRect(0, 0, width, height)
-            c.font = '10px sans-serif'
+            c.font = '10px "' + root.fontFamily + '"'
             for (var line = 0; line <= 4; line++) {
                 var y = 8 + (h - 8)*line/4
                 c.strokeStyle = root.gridLine; c.lineWidth = 1
@@ -73,11 +77,15 @@ Item {
             var pts = root.points, bw = root.barWidth()
             for (var i = 0; i < pts.length; i++) {
                 var p = pts[i], x = root.xFor(p[0]), hot = i === root.hoverIndex
-                var yRx = yFor(p[1]), yTop = yFor(p[1] + p[2])
+                // Audit #16: a NaN bucket is skipped, never drawn as zero.
+                var rx = (typeof p[1] === 'number' && isFinite(p[1])) ? Math.max(0, p[1]) : 0
+                var tx = (typeof p[2] === 'number' && isFinite(p[2])) ? Math.max(0, p[2]) : 0
+                if (!isFinite(p[0])) continue
+                var yRx = yFor(rx), yTop = yFor(rx + tx)
                 c.fillStyle = hot ? Qt.lighter(root.tint, 1.25) : root.tint
-                c.fillRect(x, yRx, bw, Math.max(p[1] > 0 ? 1 : 0, base - yRx))
+                c.fillRect(x, yRx, bw, Math.max(rx > 0 ? 1 : 0, base - yRx))
                 c.fillStyle = hot ? Qt.lighter(root.upTint, 1.25) : root.upTint
-                c.fillRect(x, yTop, bw, Math.max(p[2] > 0 ? 1 : 0, yRx - yTop))
+                c.fillRect(x, yTop, bw, Math.max(tx > 0 ? 1 : 0, yRx - yTop))
             }
             c.strokeStyle = root.baseLine; c.lineWidth = 1
             c.beginPath(); c.moveTo(x0, base + 0.5); c.lineTo(x0 + w, base + 0.5); c.stroke()
@@ -91,7 +99,7 @@ Item {
         anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter
         width: hoverText.implicitWidth + 20; height: 27; radius: 7; color: root.tipBackground; border.color: root.tipBorder
         Text {
-            id: hoverText; anchors.centerIn: parent; color: root.tipText; font.pixelSize: 11; textFormat: Text.PlainText
+            id: hoverText; anchors.centerIn: parent; color: root.tipText; font.family: root.fontFamily; font.pixelSize: 11; textFormat: Text.PlainText
             text: {
                 var p = root.hoverPoint
                 if (!p) return ''
@@ -100,9 +108,12 @@ Item {
         }
     }
     MouseArea {
-        anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton
-        onExited: root.hoverIndex = -1
+        anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.LeftButton
+        propagateComposedEvents: true
+        onExited: { if (!root.hoverPinned) root.hoverIndex = -1 }
+        onClicked: function(mouse) { if (root.hoverIndex >= 0) root.hoverPinned = true; else root.hoverPinned = false; mouse.accepted = false }
         onPositionChanged: function(mouse) {
+            if (root.hoverPinned) return
             var wanted = (root.usageData.start || 0) + (mouse.x - root.leftAxis)/root.plotWidth()*root.span, best = -1
             for (var i = 0; i < root.points.length; i++) {
                 var t = root.points[i][0]

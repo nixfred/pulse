@@ -1,4 +1,5 @@
 import re,os,sys
+import tempfile
 SRC=os.path.expanduser('~/.config/omarchy/plugins/')
 DST=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))+'/'
 
@@ -16,6 +17,20 @@ DST=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))+'/'
 # sections, models, chips and graphs, so any change made to accommodate the
 # GPU domain has to live in SUMMARY/MODEL_PATCHES/LAYOUT_PATCHES below, never
 # in the generated files themselves.
+def write_text_atomic(dst, text):
+    d = os.path.dirname(os.path.abspath(dst)) or '.'
+    fd, tmp = tempfile.mkstemp(prefix='.' + os.path.basename(dst) + '.', dir=d)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(text)
+        os.replace(tmp, dst)
+    except:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
 SPEC={
  'Cpu': dict(pid='nixfred.cpu-pulse', key='cpu', title='CPU', blurb='Your processor, in motion.',
              tabs=['Overview','CPU hogs','Processor lab','About'], extra_imports=[]),
@@ -385,9 +400,9 @@ Item {{
     }}
 }}
 '''
-    open(os.path.join(DST,'sections',name+'Section.qml'),'w').write(out)
+    write_text_atomic(os.path.join(DST,'sections',name+'Section.qml'), out)
     # stash the About/footer leftovers for the merged About page
-    open(os.path.join(DST,'sections','_%s_about.qml.part'%sp['key']),'w').write(about)
+    write_text_atomic(os.path.join(DST,'sections','_%s_about.qml.part'%sp['key']), about)
     print(f"{name}Section.qml  head={L['wb']-14}L comps={len(L['components'])} tabs={len(tabcols)} footer={rest_end-rest_start+1}L → {len(out.split(chr(10)))}L")
 
 # ---- post-pass fixups, so one run produces buildable files -------------
@@ -400,7 +415,7 @@ for f in glob.glob(os.path.join(DST,'sections','*Section.qml')):
     t=t.replace("Qt.resolvedUrl('manifest.json')", "Qt.resolvedUrl('../manifest.json')")
     t=t.replace("    readonly property var bar: host.bar",
                 "    readonly property string moduleName: host.moduleName\n    readonly property var bar: host.bar")
-    open(f,'w').write(t)
+    write_text_atomic(f, t)
 print('fixups applied')
 
 
@@ -513,7 +528,7 @@ for stem, edits in GRAPH_AXES.items():
     t = t.replace('        onWidthChanged: root.repaint()',
                   '        onWidthChanged: root.repaint()\n'
                   '        Connections { target: root; function onAxesVisibleChanged() { root.repaint() } }', 1)
-    open(f, 'w').write(t)
+    write_text_atomic(f, t)
 print('graph axes made optional')
 
 # Chips and graphs each import their own domain model by name, so the four
@@ -526,7 +541,7 @@ for stem,dom in OWNER.items():
     if not os.path.exists(f): continue
     t=open(f).read()
     t=t.replace('import "Model.js" as Model','import "%sModel.js" as Model'%dom)
-    open(f,'w').write(t)
+    write_text_atomic(f, t)
 print('chip model imports repointed')
 
 # ---- fixes carried on top of the upstream models --------------------------
@@ -636,5 +651,5 @@ for fname, edits in MODEL_PATCHES.items():
         if old not in t:
             raise SystemExit('model patch no longer applies to %s:\n%s' % (fname, old))
         t = t.replace(old, new) if every else t.replace(old, new, 1)
-    open(f, 'w').write(t)
+    write_text_atomic(f, t)
 print('model patches applied')

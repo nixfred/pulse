@@ -28,15 +28,21 @@ Item {
     property color hoverForeground: '#edf5f7'
     property string fontFamily: 'sans-serif'
     property int hoverIndex: -1
+    // Clicking pins the hover chip (audit #28); moves do not retarget while pinned.
+    property bool hoverPinned: false
     readonly property int leftAxis: axesVisible ? 46 : 0
     readonly property int rightAxis: axesVisible ? 34 : 0
     readonly property var points: historyData && historyData.points ? historyData.points : []
     readonly property var hoverPoint: hoverIndex >= 0 && hoverIndex < points.length ? points[hoverIndex] : null
-    readonly property real ceiling: Model.niceMax(Math.max(historyData.peakRead || 0, historyData.peakWrite || 0))
+    // Audit #16: ceiling is at least 1 so a quiet drive never divides by zero;
+    // span/bucket guard the x mapping the same way.
+    readonly property real ceiling: Math.max(1, Model.niceMax(Math.max(historyData.peakRead || 0, historyData.peakWrite || 0)))
+    readonly property real span: Math.max(1, Number(historyData.seconds) || 3600)
+    readonly property real bucket: Math.max(1, Number(historyData.bucket) || 15)
     // History keeps landing every 15s while the dashboard is closed. Painting
     // for it then is wasted; the graph catches up when it becomes visible.
     function repaint() { if (root.visible) graph.requestPaint() }
-    onHistoryDataChanged: { hoverIndex=-1; repaint() }
+    onHistoryDataChanged: { hoverIndex=-1; hoverPinned=false; repaint() }
     onTintChanged: repaint()
     onWriteTintChanged: repaint()
     onBusyTintChanged: repaint()
@@ -45,7 +51,7 @@ Item {
     onAxisTextChanged: repaint()
     onVisibleChanged: repaint()
     function plotWidth() { return Math.max(1, width-leftAxis-rightAxis) }
-    function xFor(ts) { return leftAxis+plotWidth()*(ts-(historyData.now-historyData.seconds))/historyData.seconds }
+    function xFor(ts) { return leftAxis+plotWidth()*(ts-(historyData.now-root.span))/root.span }
     Canvas {
         id: graph
         anchors.fill: parent
@@ -72,9 +78,10 @@ Item {
                 c.beginPath();var pen=false
                 for(var i=0;i<pts.length;i++){
                     var p=pts[i], v=p[index]
-                    if(v===null||v===undefined){pen=false;continue}
+                    // Audit #16: null, undefined and NaN all break the trace.
+                    if(v===null||v===undefined||typeof v!=='number'||!isFinite(v)){pen=false;continue}
                     var x=root.xFor(p[0]), yy=yFn(v)
-                    if(!pen || p[0]-pts[i-1][0]>root.historyData.bucket*2.5 || p[7]!==pts[i-1][7]) c.moveTo(x,yy); else c.lineTo(x,yy)
+                    if(!pen || p[0]-pts[i-1][0]>root.bucket*2.5 || p[7]!==pts[i-1][7]) c.moveTo(x,yy); else c.lineTo(x,yy)
                     pen=true
                 }
                 c.stroke();c.setLineDash([])
@@ -113,12 +120,17 @@ Item {
         }
     }
     MouseArea {
-        anchors.fill:parent; hoverEnabled:true; acceptedButtons:Qt.NoButton
-        onExited:root.hoverIndex=-1
+        anchors.fill:parent; hoverEnabled:true; acceptedButtons:Qt.LeftButton
+        // Clicks still reach the Overview card behind the graph (which opens
+        // the domain): pinning the hover must not swallow them.
+        propagateComposedEvents: true
+        onExited:{ if(!root.hoverPinned) root.hoverIndex=-1 }
+        onClicked:function(mouse){ if(root.hoverIndex>=0) root.hoverPinned=true; else root.hoverPinned=false; mouse.accepted=false }
         onPositionChanged:function(mouse){
-            var wanted=root.historyData.now-root.historyData.seconds+(mouse.x-root.leftAxis)/root.plotWidth()*root.historyData.seconds, best=-1, distance=Infinity
+            if(root.hoverPinned) return
+            var wanted=root.historyData.now-root.span+(mouse.x-root.leftAxis)/root.plotWidth()*root.span, best=-1, distance=Infinity
             for(var i=0;i<root.points.length;i++){var d=Math.abs(root.points[i][0]-wanted);if(d<distance){distance=d;best=i}}
-            root.hoverIndex=distance<root.historyData.bucket*3?best:-1
+            root.hoverIndex=distance<root.bucket*3?best:-1
         }
     }
 }

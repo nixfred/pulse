@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "CpuModel.js" as Model
+import "../Model.js" as Pulse
 import "Constraints.js" as Constraints
 
 // CPU section of Pulse — the whole of nixfred.cpu-pulse's dashboard, hosted
@@ -51,9 +52,17 @@ Item {
     implicitHeight: dashboard ? dashboard.implicitHeight : 0
 
     readonly property string stateDir: (Quickshell.env('XDG_STATE_HOME') || Quickshell.env('HOME')+'/.local/state')+'/cpu-pulse'
-    readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl('../collectors/cpu_pulse.py')).replace(/^file:\/\//,''))
+    // Centralised file-URL decoding (audit #17): handles %20 etc. in the path.
+    readonly property string helper: Pulse.filePath(Qt.resolvedUrl('../collectors/cpu_pulse.py'))
     property var cpu: ({})
-    property string version: ''
+    // Version resolution (audit #18): registry first, manifest file second,
+    // never hardcoded. Mirrors Ram/Disk/Net sections.
+    readonly property var registryManifest: {
+        var reg = bar && bar.shell ? bar.shell.pluginRegistry : null
+        return reg && reg.installedPlugins ? (reg.installedPlugins[root.moduleName] || null) : null
+    }
+    property var fileManifest: null
+    readonly property string version: Pulse.resolveVersion(root.registryManifest, root.fileManifest)
     property string palette: ''
     // Every colour in the dashboard resolves from the active Omarchy theme.
     // `ink` is the popup text role; the chrome is that colour at varying
@@ -76,8 +85,13 @@ Item {
     property int range: 3600
     property bool chooseMode: false
     property string actionStatus: ''
+    // A status line answers something you just did, so it expires (audit
+    // #20). Mirrors the merged Panel's 8s expiry; without this a stale answer
+    // sits until the next action overwrites it.
+    onActionStatusChanged: if (actionStatus !== '') statusExpiry.restart()
+    Timer { id: statusExpiry; interval: 8000; onTriggered: if (root.actionStatus !== '') root.actionStatus = '' }
     property real now: Date.now()/1000
-    readonly property bool stale: !cpu.ts || now-cpu.ts > 15
+    readonly property bool stale: !cpu.ts || now-cpu.ts > Pulse.STALE_CPU_S
     readonly property int mode: Model.clamp(setting('displayMode',0),0,3)
     readonly property color tint: stale ? Color.muted : Model.ramp(cpu.idlePct, rampStops)
     readonly property real pressure: cpu.psi && cpu.psi.some ? cpu.psi.some.avg10 : 0
@@ -112,16 +126,16 @@ Item {
     FileView {
         id:snapshotFile; path:root.stateDir+'/snapshot.json'; watchChanges:true; printErrors:false
         onFileChanged:reload()
-        onLoaded:{try{var m=JSON.parse(text());if(m.warm)root.cpu=m}catch(e){}}
+        onLoaded:{try{var m=Pulse.safeParse(text(),null);if(m&&m.warm)root.cpu=m}catch(e){}}
     }
     FileView {
         id:historyFile; path:root.stateDir+'/history.json'; watchChanges:true; printErrors:false
         onFileChanged:reload()
-        onLoaded:{try{root.histories=JSON.parse(text())}catch(e){}}
+        onLoaded:{try{var h=Pulse.safeParse(text(),null);if(h)root.histories=h}catch(e){}}
     }
     FileView {
-        id:manifestFile; path:String(Qt.resolvedUrl('../manifest.json')).replace(/^file:\/\//,''); printErrors:false
-        onLoaded:{try{root.version=String(JSON.parse(text()).version||'')}catch(e){}}
+        id:manifestFile; path:Pulse.filePath(Qt.resolvedUrl('../manifest.json')); printErrors:false
+        onLoaded:{try{var m=Pulse.safeParse(text(),null);if(m&&typeof m==='object')root.fileManifest=m}catch(e){}}
     }
     // The shell parses colors.toml into foreground/background/accent/urgent/
     // muted and stops there, so the green and yellow the ramp needs are read
@@ -194,10 +208,13 @@ Item {
     }
     readonly property string headline: root.stale ? '—' : Model.readout(root.cpu, root.mode)
     readonly property string tag: Model.modeTag(root.mode)
-    property Component barChip: Component { CpuChip {compact:true;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.barTint;stops:root.rampStops;dieFill:root.barTransparent?'transparent':Color.background;glint:root.barInk;animate:!root.stale && root.setting('animated',true)} }
-    property Component cardChip: Component { CpuChip {width:88;height:88;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.tint;stops:root.rampStops;dieFill:Color.popups.background;glint:root.ink;animate:root.cardLive} }
+    property Component barChip: Component { CpuChip {compact:true;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.barTint;stops:root.rampStops;dieFill:root.barTransparent?'transparent':Color.background;glint:root.barInk;panelOpen:host.opened;animate:!root.stale && root.setting('animated',true)} }
+    property Component cardChip: Component { CpuChip {width:88;height:88;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.tint;stops:root.rampStops;dieFill:Color.popups.background;glint:root.ink;panelOpen:host.opened;animate:root.cardLive} }
     property Component cardGraph: Component { CpuHistoryGraph {axesVisible:false;historyData:root.chart;tint:root.tint;heat:root.heat;ink:root.ink;surface:Color.popups.background} }
 
+    // Local chrome aliases. Kept byte-identical to the canonical definitions
+    // in sections/PulseChrome.qml (audit #22); the shared file also carries
+    // the radii/severity helpers the merged Panel binds to.
     component Label: Text {
         color:root.inkDim;font.pixelSize:12;textFormat:Text.PlainText
     }
@@ -262,7 +279,7 @@ Item {
                     Rectangle {
                         width:parent.width;height:170;radius:16;border.color:Qt.alpha(root.tint,0.45)
                         gradient:Gradient {GradientStop{position:0;color:Qt.alpha(root.tint,0.13)}GradientStop{position:1;color:root.card}}
-                        CpuChip {id:heroChip;x:12;y:5;width:160;height:160;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.tint;stops:root.rampStops;dieFill:Color.background;glint:root.ink;animate:root.opened&&root.tab===0&&!root.stale&&root.setting('animated',true)}
+                        CpuChip {id:heroChip;x:12;y:5;width:160;height:160;busy:root.cpu.busyPct || 0;cores:root.coreLoads;tint:root.tint;stops:root.rampStops;dieFill:Color.background;glint:root.ink;panelOpen:host.opened;animate:root.opened&&root.tab===0&&!root.stale&&root.setting('animated',true)}
                         Column {x:188;y:20;spacing:6
                             Label{text:'PROCESSOR BUSY';font.pixelSize:11;font.letterSpacing:2}
                             Row {spacing:10
@@ -335,7 +352,7 @@ Item {
                             required property int index
                             width:mainColumn.width;height:65;radius:10
                             color:hogMouse.containsMouse?Style.hoverFill:root.card;border.color:hogMouse.containsMouse?root.tint:root.cardEdge
-                            Rectangle{anchors.left:parent.left;anchors.bottom:parent.bottom;anchors.leftMargin:12;anchors.bottomMargin:5;width:(parent.width-24)*Model.clamp(procRow.modelData.cpu/(100*(root.cpu.threads||1)),0,1);height:2;radius:1;color:root.tint}
+                            Rectangle{anchors.left:parent.left;anchors.bottom:parent.bottom;anchors.leftMargin:12;anchors.bottomMargin:5;width:(parent.width-24)*Model.clamp(Model.num(procRow.modelData.cpu)/(100*Model.num(root.cpu.threads, 1) || 1),0,1);height:2;radius:1;color:root.tint}
                             Label{x:12;y:22;text:String(root.page*8+procRow.index+1).padStart(2,'0');font.pixelSize:12;color:root.tint}
                             Column{x:44;y:10;spacing:5;width:parent.width-222
                                 Heading{text:procRow.modelData.name+'  ·  '+procRow.modelData.pid;font.pixelSize:13;width:parent.width;elide:Text.ElideRight}

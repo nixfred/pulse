@@ -19,11 +19,16 @@ Item {
     property color hoverForeground: '#edf5f7'
     property string fontFamily: 'sans-serif'
     property int hoverIndex: -1
+    // Clicking pins the hover chip (audit #28); moves do not retarget while pinned.
+    property bool hoverPinned: false
     readonly property var points: historyData.points || []
+    // Audit #16: never divide by a zero/missing window; never plot NaN.
+    readonly property real span: Math.max(1, Number(historyData.seconds) || 3600)
+    readonly property real bucket: Math.max(1, Number(historyData.bucket) || 15)
     // History keeps landing every 15s while the dashboard is closed. Painting
     // for it then is wasted; the graph catches up when it becomes visible.
     function repaint() { if (root.visible) graph.requestPaint() }
-    onHistoryDataChanged: { hoverIndex=-1; repaint() }
+    onHistoryDataChanged: { hoverIndex=-1; hoverPinned=false; repaint() }
     onTintChanged: repaint()
     onSwapTintChanged: repaint()
     onGridChanged: repaint()
@@ -45,18 +50,23 @@ Item {
                 c.strokeStyle=root.grid;c.lineWidth=1;c.beginPath();c.moveTo(0,y);c.lineTo(w,y);c.stroke()
                 if(root.axesVisible){c.fillStyle=root.axisText;c.fillText(String(100-line*25)+'%',width,y+3)}
             }
-            function xAt(p){return w*(p[0]-(root.historyData.now-root.historyData.seconds))/root.historyData.seconds}
+            function xAt(p){return w*(p[0]-(root.historyData.now-root.span))/root.span}
             function yAt(v){return 8+(h-8)*(1-v/100)}
             var pts=root.points
             // Empty elapsed time stays empty. Gaps and reboots break every trace.
+            // NaN readings are skipped, never plotted at 0 (audit #16).
             for(var metric=1;metric<=3;metric++){
                 c.lineWidth=metric===1?2.2:1
                 c.strokeStyle=metric===3?root.swapTint:metric===2?Qt.alpha(root.tint,0.28):root.tint
                 c.beginPath()
+                var pen=false
                 for(var i=0;i<pts.length;i++){
-                    var p=pts[i], x=xAt(p), y=yAt(p[metric])
-                    if(i===0 || p[0]-pts[i-1][0]>root.historyData.bucket*2.5 || p[6]!==pts[i-1][6]) c.moveTo(x,y)
+                    var p=pts[i], v=p[metric]
+                    if(typeof v!=='number'||!isFinite(v)){pen=false;continue}
+                    var x=xAt(p), y=yAt(v)
+                    if(!pen || p[0]-pts[i-1][0]>root.bucket*2.5 || p[6]!==pts[i-1][6]) c.moveTo(x,y)
                     else c.lineTo(x,y)
+                    pen=true
                 }
                 c.stroke()
             }
@@ -72,7 +82,7 @@ Item {
     }
     Rectangle {
         visible: root.hoverIndex >= 0
-        x: root.hoverIndex >= 0 ? Math.max(0,Math.min(parent.width-38,(root.points[root.hoverIndex][0]-(root.historyData.now-root.historyData.seconds))/root.historyData.seconds*(parent.width-38))) : 0
+        x: root.hoverIndex >= 0 ? Math.max(0,Math.min(parent.width-38,(root.points[root.hoverIndex][0]-(root.historyData.now-root.span))/root.span*(parent.width-38))) : 0
         y: 8; width: 1; height: parent.height-34; color: root.crosshair
     }
     Rectangle {
@@ -89,12 +99,17 @@ Item {
         }
     }
     MouseArea {
-        anchors.fill:parent; hoverEnabled:true; acceptedButtons:Qt.NoButton
-        onExited:root.hoverIndex=-1
+        anchors.fill:parent; hoverEnabled:true; acceptedButtons:Qt.LeftButton
+        // Clicks still reach the Overview card behind the graph (which opens
+        // the domain): pinning the hover must not swallow them.
+        propagateComposedEvents: true
+        onExited:{ if(!root.hoverPinned) root.hoverIndex=-1 }
+        onClicked:function(mouse){ if(root.hoverIndex>=0) root.hoverPinned=true; else root.hoverPinned=false; mouse.accepted=false }
         onPositionChanged:function(mouse){
-            var wanted=root.historyData.now-root.historyData.seconds+mouse.x/(width-38)*root.historyData.seconds, best=-1, distance=Infinity
+            if(root.hoverPinned) return
+            var wanted=root.historyData.now-root.span+mouse.x/(width-38)*root.span, best=-1, distance=Infinity
             for(var i=0;i<root.points.length;i++){var d=Math.abs(root.points[i][0]-wanted);if(d<distance){distance=d;best=i}}
-            root.hoverIndex=distance<root.historyData.bucket*3?best:-1
+            root.hoverIndex=distance<root.bucket*3?best:-1
         }
     }
 }

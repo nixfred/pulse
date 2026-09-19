@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "../Model.js" as Pulse
 
 // What this plugin is, what it replaced, and where each part came from.
 // Per-domain detail — versions, recorder state, retention — stays on each
@@ -36,8 +37,11 @@ Item {
     // report either way.
     function openUrl(url) {
         if (!url) return
+        // Only https: targets reach the desktop handler (audit #27).
+        var target = String(url)
+        if (!Pulse.isHttps(target)) return
         host.close()
-        Quickshell.execDetached(['xdg-open', String(url)])
+        Quickshell.execDetached(['xdg-open', target])
     }
 
     component Label: Text {
