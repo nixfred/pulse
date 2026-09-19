@@ -3,6 +3,38 @@
 The version lives in `manifest.json`. Every release bumps it, adds an entry
 here, and is tagged `vX.Y.Z`: a fix bumps the patch, a new capability the minor.
 
+## 1.3.2 - 2026-09-19
+
+### Fixed
+Seven defects in the new GPU domain, found by an independent review of the code
+(Kimi k3) and each verified here before it was touched.
+
+- **The hardware list was decided once, at startup.** A user service can start
+  before the NVIDIA module is loaded, and that single failed init meant "no
+  NVIDIA driver on this machine" until someone restarted the unit by hand. The
+  same staleness applied after a driver reload, where the handles do not
+  survive and every reading silently became a dash on a recorder that still
+  claimed to be live. Discovery is retried while nothing is found, and a card
+  that answers nothing at all for five samples is re-initialised.
+- **An AMD card whose memory-used file could not be read reported 0.0% VRAM.**
+  A confident zero, which is the one thing this collector promises never to
+  print. It now needs both halves of the fraction.
+- **`NVML_CLOCK_SM` was 0, which is the GRAPHICS domain, not SM (1).** Invisible
+  on current cards, where GRAPHICS is a deprecated alias returning the same
+  number (verified: 900 MHz current, 3090 max on both), but wrong against the
+  ABI.
+- **A process holding memory on a second GPU was shown as a share of the first
+  one's memory.** Hog percentages and bars now divide by the card the process is
+  actually running on.
+- **The PCIe tile printed `gen null x8`** when the link generation failed to read
+  while the width succeeded. The power and clock hints had the same shape,
+  showing "0% of a 40 W limit" when the draw itself was unreadable.
+- **A failed utilisation reading drew a cliff to 0% busy** in the history graph.
+  A reading the card never reported is a gap in the trace, not a zero.
+- **A process table was thrown away for a cycle** when more processes appeared
+  between asking NVML how many there were and reading them. It retries with
+  more room instead.
+
 ## 1.3.1 - 2026-09-19
 
 ### Fixed

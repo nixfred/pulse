@@ -73,8 +73,13 @@ Item {
                     var p = pts[i], x = xAt(p), y = yAt(p[metric])
                     // A null temperature or VRAM reading is a card that does
                     // not report it, not a zero.
+                    // A reading the card never reported is a gap, not a zero, and
+                    // that applies to busy as much as to temperature and VRAM: a
+                    // failed utilisation call drew a cliff down to 0% busy.
+                    if (p[metric] === null || p[metric] === undefined) continue
                     if ((metric === 3 || metric === 4) && !(p[metric] > 0)) continue
                     if (i === 0 || p[0] - pts[i - 1][0] > root.historyData.bucket * 2.5 || p[6] !== pts[i - 1][6]
+                        || pts[i - 1][metric] === null || pts[i - 1][metric] === undefined
                         || ((metric === 3 || metric === 4) && !(pts[i - 1][metric] > 0))) c.moveTo(x, y)
                     else c.lineTo(x, y)
                 }

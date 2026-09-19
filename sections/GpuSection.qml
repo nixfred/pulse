@@ -85,6 +85,14 @@ Item {
     // Lab tiles spread to whatever width the panel has, the same rule the
     // storage lab follows, so a wide screen means fewer rows rather than a
     // page that runs off the bottom.
+    // A process holds memory on the card it runs on, which is not necessarily
+    // the one the headline readings come from. Dividing every hog by the primary
+    // card's total misreported every process on a second GPU.
+    function cardTotal(id) {
+        for (var i = 0; i < root.cards.length; i++)
+            if (root.cards[i].id === id && root.cards[i].memTotal) return root.cards[i].memTotal
+        return root.gpu.memTotal || 0
+    }
     readonly property int labColumns: Math.max(4, Math.floor((root.width + 10) / 200))
 
     function setMode(value) {
@@ -257,8 +265,8 @@ Item {
                 }
                 Row {width:parent.width;spacing:10
                     Stat{width:(parent.width-30)/4;height:90;label:'VIDEO MEMORY';value:Model.pct(root.gpu.memUsedPct);hint:Model.size(root.gpu.memUsed)+' of '+Model.size(root.gpu.memTotal)}
-                    Stat{width:(parent.width-30)/4;height:90;label:'POWER';value:Model.watts(root.gpu.powerW);hint:root.gpu.powerLimitW?Math.round(root.gpu.powerPct||0)+'% of a '+Math.round(root.gpu.powerLimitW)+' W limit':'no limit reported'}
-                    Stat{width:(parent.width-30)/4;height:90;label:'CLOCK';value:Model.mhz(root.gpu.clockSmMhz);hint:root.gpu.clockSmMaxMhz?Math.round(root.gpu.clockPct||0)+'% of '+Model.mhz(root.gpu.clockSmMaxMhz):'peak unknown'}
+                    Stat{width:(parent.width-30)/4;height:90;label:'POWER';value:Model.watts(root.gpu.powerW);hint:root.gpu.powerLimitW&&root.gpu.powerPct!==null&&root.gpu.powerPct!==undefined?Math.round(root.gpu.powerPct)+'% of a '+Math.round(root.gpu.powerLimitW)+' W limit':root.gpu.powerLimitW?'limit '+Math.round(root.gpu.powerLimitW)+' W':'no limit reported'}
+                    Stat{width:(parent.width-30)/4;height:90;label:'CLOCK';value:Model.mhz(root.gpu.clockSmMhz);hint:root.gpu.clockSmMaxMhz&&root.gpu.clockPct!==null&&root.gpu.clockPct!==undefined?Math.round(root.gpu.clockPct)+'% of '+Model.mhz(root.gpu.clockSmMaxMhz):root.gpu.clockSmMaxMhz?'peak '+Model.mhz(root.gpu.clockSmMaxMhz):'peak unknown'}
                     Stat{width:(parent.width-30)/4;height:90;label:'STATE';value:Model.pstate(root.gpu.pstate);hint:(root.gpu.throttleActive||[]).length?'held back · '+(root.gpu.throttleActive||[]).length+' reason(s)':'nothing holding it back'}
                 }
                 Rectangle {width:parent.width;height:214;radius:14;color:root.card;border.color:root.cardEdge
@@ -323,7 +331,7 @@ Item {
                         width:mainColumn.width;height:65;radius:10
                         color:hogMouse.containsMouse?Style.hoverFill:root.card;border.color:hogMouse.containsMouse?root.tint:root.cardEdge
                         Rectangle{anchors.left:parent.left;anchors.bottom:parent.bottom;anchors.leftMargin:12;anchors.bottomMargin:5;height:2;radius:1;color:root.memTint
-                            width:(parent.width-24)*Model.clamp(procRow.modelData.memBytes/(root.gpu.memTotal||1),0,1)}
+                            width:(parent.width-24)*Model.clamp(procRow.modelData.memBytes/(root.cardTotal(procRow.modelData.card)||1),0,1)}
                         Label{x:12;y:22;text:String(root.page*8+procRow.index+1).padStart(2,'0');font.pixelSize:12;color:root.tint}
                         Column{x:44;y:10;spacing:5;width:parent.width-240
                             Heading{text:procRow.modelData.name+'  ·  '+procRow.modelData.pid;font.pixelSize:13;width:parent.width;elide:Text.ElideRight}
@@ -331,7 +339,7 @@ Item {
                         }
                         Column{anchors.right:parent.right;anchors.rightMargin:35;y:10;spacing:5
                             Heading{text:Model.size(procRow.modelData.memBytes);font.pixelSize:15;anchors.right:parent.right}
-                            Label{text:(procRow.modelData.smPct===null||procRow.modelData.smPct===undefined?'no per-process load':procRow.modelData.smPct+'% of the card')+'  ·  '+Model.pct(procRow.modelData.memBytes/(root.gpu.memTotal||1)*100);font.pixelSize:10;anchors.right:parent.right}
+                            Label{text:(procRow.modelData.smPct===null||procRow.modelData.smPct===undefined?'no per-process load':procRow.modelData.smPct+'% of the card')+'  ·  '+Model.pct(procRow.modelData.memBytes/(root.cardTotal(procRow.modelData.card)||1)*100);font.pixelSize:10;anchors.right:parent.right}
                         }
                         Label{anchors.right:parent.right;anchors.rightMargin:13;y:22;text:procRow.modelData.mine?'↗':'ⓘ';color:root.tint;font.pixelSize:16}
                         MouseArea{id:hogMouse;anchors.fill:parent;hoverEnabled:true;cursorShape:Qt.PointingHandCursor
@@ -362,7 +370,7 @@ Item {
                     Stat{width:(mainColumn.width-10*(root.labColumns-1))/root.labColumns;height:80;valueSize:17;label:'CORE CLOCK';value:Model.mhz(root.gpu.clockSmMhz);hint:'peak '+Model.mhz(root.gpu.clockSmMaxMhz)}
                     Stat{width:(mainColumn.width-10*(root.labColumns-1))/root.labColumns;height:80;valueSize:17;label:'FAN';value:root.gpu.fanPct===null||root.gpu.fanPct===undefined?'—':Model.whole(root.gpu.fanPct);hint:root.gpu.fanPct===null||root.gpu.fanPct===undefined?'not reported on this card':'of full speed'}
                     Stat{width:(mainColumn.width-10*(root.labColumns-1))/root.labColumns;height:80;valueSize:17;label:'POWER STATE';value:Model.pstate(root.gpu.pstate);hint:'P0 is flat out'}
-                    Stat{width:(mainColumn.width-10*(root.labColumns-1))/root.labColumns;height:80;valueSize:17;label:'PCIE LINK';value:root.gpu.cards&&root.cards.length&&root.cards[0].pcieWidth?'gen '+root.cards[0].pcieGen+' x'+root.cards[0].pcieWidth:'—';hint:'drops when idle to save power'}
+                    Stat{width:(mainColumn.width-10*(root.labColumns-1))/root.labColumns;height:80;valueSize:17;label:'PCIE LINK';value:root.cards.length&&root.cards[0].pcieWidth&&root.cards[0].pcieGen?'gen '+root.cards[0].pcieGen+' x'+root.cards[0].pcieWidth:'—';hint:'drops when idle to save power'}
                     Stat{width:(mainColumn.width-10*(root.labColumns-1))/root.labColumns;height:80;valueSize:17;label:'ENCODER';value:root.gpu.encoderPct===null||root.gpu.encoderPct===undefined?'—':Model.whole(root.gpu.encoderPct);hint:'video encode engine'}
                     Stat{width:(mainColumn.width-10*(root.labColumns-1))/root.labColumns;height:80;valueSize:17;label:'ADAPTERS';value:String(root.gpu.count||0);hint:root.cards.length>1?'discrete leads the readings':'one adapter'}
                 }

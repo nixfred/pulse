@@ -41,7 +41,11 @@ LINKS = {'repo': 'https://github.com/nixfred/pulse',
 
 NVML_SUCCESS = 0
 NVML_TEMPERATURE_GPU = 0
-NVML_CLOCK_SM = 0
+# nvmlClockType_t: GRAPHICS=0, SM=1, MEM=2, VIDEO=3. SM is 1, not 0. On current
+# cards GRAPHICS is a deprecated alias reporting the same number (verified
+# here: both 900 MHz current, 3090 max), so the wrong constant was invisible,
+# which is exactly why it needed checking against the ABI rather than the eye.
+NVML_CLOCK_SM = 1
 NVML_CLOCK_MEM = 2
 NVML_PCIE_UTIL_TX = 0
 NVML_PCIE_UTIL_RX = 1
@@ -121,6 +125,14 @@ class Nvml(object):
             if lib.nvmlDeviceGetHandleByIndex_v2(index, ctypes.byref(handle)) == NVML_SUCCESS:
                 self.handles.append(handle)
         return bool(self.handles)
+
+    def stop(self):
+        try:
+            if self.lib is not None:
+                self.lib.nvmlShutdown()
+        except OSError:
+            pass
+        self.handles = []
 
     def _u32(self, name, handle, *args):
         fn = getattr(self.lib, name, None)
@@ -238,13 +250,23 @@ class Nvml(object):
                 continue
             count = ctypes.c_uint(0)
             fn(handle, ctypes.byref(count), None)
-            room = max(count.value, 4) + 8
-            arr = (_ProcInfo * room)()
-            got = ctypes.c_uint(room)
-            if fn(handle, ctypes.byref(got), arr) != NVML_SUCCESS:
+            # Headroom, then one retry: processes can appear between asking how
+            # many there are and reading them, and NVML answers that with
+            # INSUFFICIENT_SIZE rather than a truncated list, which threw the
+            # whole table away for a cycle.
+            rows = None
+            for slack in (8, 64):
+                room = max(count.value, 4) + slack
+                arr = (_ProcInfo * room)()
+                got = ctypes.c_uint(room)
+                if fn(handle, ctypes.byref(got), arr) == NVML_SUCCESS:
+                    rows = (arr, min(got.value, room))
+                    break
+            if rows is None:
                 continue
+            arr, found = rows
             kind = 'graphics' if 'Graphics' in name else 'compute'
-            for i in range(min(got.value, room)):
+            for i in range(found):
                 entry = arr[i]
                 if not entry.pid:
                     continue
@@ -371,7 +393,11 @@ def amd_sample(card):
         'busyPct': read_int(os.path.join(device, 'gpu_busy_percent')),
         'memTotal': total,
         'memUsed': used,
-        'memUsedPct': None if not total else round((used or 0) / float(total) * 100.0, 1),
+        # Both readings required. `(used or 0)` here turned an unreadable file
+        # into a confident '0.0% VRAM used', which is the one thing this
+        # module promises never to do.
+        'memUsedPct': (None if not total or used is None
+                       else round(used / float(total) * 100.0, 1)),
         'tempC': temp,
         'powerW': power,
         'powerLimitW': None,
@@ -383,9 +409,42 @@ def amd_sample(card):
 # ---- assembly ------------------------------------------------------------
 
 NVML = Nvml()
-NVML_READY = NVML.start()
-INTEL = intel_cards()
-AMD = drm_cards('0x1002')
+NVML_READY = False
+INTEL = []
+AMD = []
+# When the hardware list was last rebuilt, and how often it may be rebuilt while
+# nothing has been found.
+LAST_SCAN = 0.0
+RESCAN_AFTER = 30.0
+# Consecutive samples where NVML claimed to have a card but every reading came
+# back empty. That is what a driver reload looks like from in here: the handles
+# are stale, so the panel would show a live recorder with nothing but dashes.
+NVML_BLANKS = 0
+BLANKS_BEFORE_REINIT = 5
+
+
+def discover_hardware():
+    """(Re)build the list of GPUs this machine has.
+
+    Deliberately not done once at import. This runs as a user service that can
+    start before the NVIDIA module is loaded, and a single failed init at boot
+    would otherwise mean "no NVIDIA driver on this machine" until someone
+    restarted the unit by hand. It is also how a driver reload is recovered
+    from, since the device handles do not survive one.
+    """
+    global NVML, NVML_READY, INTEL, AMD, LAST_SCAN, NVML_BLANKS
+    if NVML_READY:
+        NVML.stop()
+    NVML = Nvml()
+    NVML_READY = NVML.start()
+    INTEL = intel_cards()
+    AMD = drm_cards('0x1002')
+    LAST_SCAN = time.time()
+    NVML_BLANKS = 0
+    return NVML_READY or bool(INTEL) or bool(AMD)
+
+
+discover_hardware()
 
 
 def throttle_rate(card, previous_card):
@@ -453,9 +512,23 @@ def sample_cards(previous):
 
 
 def metrics(previous=None):
+    global NVML_BLANKS
     ts = time.time()
     monotonic = time.monotonic()
+    # Nothing found last time: the driver may have arrived since. Cheap, and
+    # only while the answer is still "no GPU".
+    if not (NVML_READY or INTEL or AMD) and ts - LAST_SCAN > RESCAN_AFTER:
+        discover_hardware()
     cards, intel_state = sample_cards(previous)
+    # A card that answers nothing at all, repeatedly, is a stale handle rather
+    # than an idle GPU: an idle GPU still reports its memory and temperature.
+    if NVML_READY:
+        blank = [c for c in cards if c.get('vendor') == 'nvidia'
+                 and c.get('busyPct') is None and c.get('memTotal') is None]
+        NVML_BLANKS = NVML_BLANKS + 1 if blank else 0
+        if NVML_BLANKS >= BLANKS_BEFORE_REINIT:
+            discover_hardware()
+            cards, intel_state = sample_cards(previous)
 
     # The headline card is the discrete one if there is one. On a laptop the
     # integrated GPU is what draws the screen, but the discrete card is what
