@@ -14,9 +14,8 @@ Three vendors, one shape:
           the per-client `drm-engine-render` deltas in fdinfo: 90% rc6-busy
           against 71% engine-busy, which is the gap you expect (a gt can be
           awake with nothing submitted).
-  AMD     amdgpu's documented sysfs ABI. There is no AMD card on this machine,
-          so those readings are written from the ABI and marked untested rather
-          than claimed to work.
+  AMD     amdgpu's documented sysfs ABI, verified on vic's integrated Radeon
+          (busy, VRAM, temperature and power all read correctly there).
 
 Every field degrades on its own. This laptop's NVML refuses fan speed and the
 temperature threshold, so they come back as null and the panel shows a dash. A
@@ -350,7 +349,12 @@ def intel_sample(card, previous):
 
 
 def amd_sample(card):
-    """amdgpu's documented sysfs ABI. UNTESTED: no AMD card on this machine."""
+    """amdgpu's documented sysfs ABI.
+
+    Verified 2026-09-19 on vic's integrated Radeon (the second GPU beside an
+    RTX 4050): busy 22%, 512 MiB of VRAM at 89.8%, 47 C, 11.28 W. Note that
+    `product_name` comes back empty there, which is why the name falls back.
+    """
     device = os.path.join(card, 'device')
     hwmon = (sorted(glob.glob(os.path.join(device, 'hwmon/hwmon*'))) or [None])[0]
     temp = power = None
@@ -373,7 +377,6 @@ def amd_sample(card):
         'powerLimitW': None,
         'clockSmMhz': None, 'clockSmMaxMhz': None,
         'throttleReasons': [], 'throttleActive': [], 'violations': {},
-        'untested': True,
     }
 
 

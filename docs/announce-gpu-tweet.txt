@@ -1,0 +1,19 @@
+Pulse watches your GPU now. That makes five domains in one bar icon: CPU, RAM, disk, network and graphics.
+
+It reads NVIDIA cards through the driver's own library instead of running nvidia-smi. A full sample costs 0.017 ms against 46 ms to start that program, which is the difference between a monitor you can leave running and one that charges you every time it looks. Intel and AMD cards are read from the kernel's own counters. Anything a card refuses to report shows a dash, never a confident zero.
+
+VRAM leads the readings, because on a machine that runs models locally that is the number that actually stops you. A full card refuses the next model while sitting at 0 percent busy, and the GPU hogs tab names exactly what is holding the memory, model name included. There is a Graphics lab for clocks, power against the real board limit, PCIe link, encoder and throttle reasons, plus seven days of history and a place in the auto-switching icon, so the GPU can take the bar when it is the thing holding the machine back.
+
+One detail worth naming: GPU throttle counters are cumulative since boot, and a laptop card sits at its power cap essentially always. Read raw, mine claimed 236,519 seconds of throttling on a perfectly healthy machine. It is scored as a rate now, and only when the driver reports a live reason.
+
+Three people made this week's other fixes, and every one of them was a real defect I had shipped.
+
+Nathan Day, @nathan_day, found that the bar chips painted a plate of bar coloured background over the wallpaper on a transparent bar, invisible on a solid one, which is why it survived. He then found three ways the installer damaged the directory it was installing into: publishing deleted the .git of a checkout that omarchy plugin add had made, a failed swap left no plugin directory at all while reporting the previous release was still in place, and a missed rescan rolled back an install that had actually completed.
+
+Jean-Baptiste Ronssin, github.com/jbronssin, worked out why the panel hesitated when it opened. It was constructing every dashboard before showing anything, because a hidden QML item is still a built one. Dashboards are built when you open that domain now.
+
+Travis Hume, github.com/computorist, reported an idle drive being called critical. Terminals waiting on io_uring inflate the kernel's I/O pressure, so the disk was being blamed for something that was not storage. Pressure only counts when a drive agrees.
+
+Also landed this week: one icon that follows whichever domain is the biggest constraint, a Constraints page ranking all five worst first on one severity scale, a right click chooser for every readout, and a rule that no page scrolls on any screen.
+
+MIT, built for Omarchy: github.com/nixfred/pulse

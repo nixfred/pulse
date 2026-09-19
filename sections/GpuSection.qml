@@ -291,7 +291,7 @@ Item {
                                 required property var modelData
                                 width:cardColumn.width;height:26
                                 Label{width:parent.width*0.46;elide:Text.ElideRight;font.pixelSize:11;color:gcard.modelData.discrete?root.ink:root.inkDim
-                                    text:(gcard.modelData.discrete?'◆ ':'◇ ')+gcard.modelData.name+(gcard.modelData.untested?'  ·  untested path':'')}
+                                    text:(gcard.modelData.discrete?'◆ ':'◇ ')+gcard.modelData.name}
                                 Label{anchors.right:parent.right;font.pixelSize:11
                                     text:(gcard.modelData.busyPct===null||gcard.modelData.busyPct===undefined?'—':Model.pct(gcard.modelData.busyPct))+' busy'
                                         +(gcard.modelData.memUsedPct!==null&&gcard.modelData.memUsedPct!==undefined?'  ·  '+Model.pct(gcard.modelData.memUsedPct)+' VRAM':'')

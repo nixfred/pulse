@@ -3,6 +3,16 @@
 The version lives in `manifest.json`. Every release bumps it, adds an entry
 here, and is tagged `vX.Y.Z`: a fix bumps the patch, a new capability the minor.
 
+## 1.3.1 - 2026-09-19
+
+### Fixed
+- The AMD reading path is no longer labelled untested. It was written from
+  amdgpu's documented sysfs ABI with no AMD card to try it on; it has now been
+  verified on a machine that has one (integrated Radeon beside an RTX 4050:
+  busy, VRAM, temperature and power all correct). Such a card was showing
+  "untested path" beside its name in the Every GPU list, which is no longer
+  true.
+
 ## 1.3.0 - 2026-09-19
 
 ### Added
