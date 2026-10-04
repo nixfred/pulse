@@ -263,7 +263,11 @@ def current_profile():
         stamp = 0.0
     if _profile['at'] and now - _profile['at'] < PROFILE_TTL and stamp == _profile['stamp']:
         return _profile['value']
-    _profile['value'] = read_profile()
+    value = read_profile()
+    # An empty read (busctl failed, the daemon restarted, the answer did not
+    # parse) must not blank the chip for PROFILE_TTL: keep the last good value.
+    if value:
+        _profile['value'] = value
     _profile['at'] = now
     _profile['stamp'] = stamp
     return _profile['value']

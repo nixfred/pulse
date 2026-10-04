@@ -3,6 +3,18 @@
 The version lives in `manifest.json`. Every release bumps it, adds an entry
 here, and is tagged `vX.Y.Z`: a fix bumps the patch, a new capability the minor.
 
+## 1.3.4 - 2026-10-04
+
+### Fixed
+- **A failed power-profile read no longer blanks the chip.** When the read came
+  back empty (busctl failed, the daemon was restarting, or the answer did not
+  parse), the collector stored the empty string and the processor chip showed
+  no profile for the whole of `PROFILE_TTL`. It now keeps the last profile it
+  actually read and still refreshes the cache clock, so a daemon that is down
+  is not polled on every sample. The idea came from a contributor's fix for the
+  old `powerprofilesctl` abort, ported onto the busctl read. Thanks to Nathan
+  Day, github.com/dadofsambonzuki, https://x.com/nathan_day (#7).
+
 ## 1.3.3 - 2026-10-03
 
 ### Fixed
