@@ -14,6 +14,7 @@ import time
 
 STATE = Path(os.environ.get('XDG_STATE_HOME') or str(Path.home() / '.local/state')) / 'cpu-pulse'
 ENV_KEYS = {'HERDR_ENV', 'HERDR_SOCKET_PATH', 'HERDR_WORKSPACE_ID', 'HERDR_TAB_ID', 'HERDR_PANE_ID', 'TMUX', 'TMUX_PANE', 'BOOMUX_SHELL_ID'}
+# The profile names supported by power-profiles-daemon, for reads and writes.
 PROFILES = ('power-saver', 'balanced', 'performance')
 LINKS = {'repo': 'https://github.com/nixfred/omacpu',
          'author': 'https://nixfred.com'}
@@ -248,10 +249,11 @@ PROFILE_PROPERTY = ['net.hadess.PowerProfiles', '/net/hadess/PowerProfiles', 'ne
 
 
 def read_profile():
-    out = run(['busctl', '--system', 'get-property', *PROFILE_PROPERTY, '--json=short'])
     try:
-        return str(json.loads(out)['data']).strip()
-    except (ValueError, KeyError, TypeError):
+        out = run(['busctl', '--system', 'get-property', *PROFILE_PROPERTY, '--json=short'])
+        value = json.loads(out)['data']
+        return value if isinstance(value, str) and value in PROFILES else ''
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError, ValueError, TypeError, KeyError):
         return ''
 
 

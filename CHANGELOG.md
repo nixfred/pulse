@@ -3,6 +3,18 @@
 The version lives in `manifest.json`. Every release bumps it, adds an entry
 here, and is tagged `vX.Y.Z`: a fix bumps the patch, a new capability the minor.
 
+## 1.3.5 - 2026-10-04
+
+### Fixed
+- **A bad power-profile answer no longer replaces the last good profile.** An
+  independent audit found that a JSON null became the name "None", and an
+  exception from the reader could skip the cache refresh altogether. The
+  collector now accepts only the three power-profiles-daemon profile names
+  and treats reader failures as empty reads. It keeps the last good value and
+  still refreshes the clock and change stamp, so an unavailable daemon is not
+  polled on every sample. Regression tests cover bad answers, reader failures
+  and the cache behaviour, including startup without a prior value.
+
 ## 1.3.4 - 2026-10-04
 
 ### Fixed
