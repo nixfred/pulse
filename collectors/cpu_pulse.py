@@ -252,6 +252,8 @@ def read_profile():
     try:
         out = run(['busctl', '--system', 'get-property', *PROFILE_PROPERTY, '--json=short'])
         value = json.loads(out)['data']
+        # Only a known profile name is a good read. Anything else, a JSON null
+        # included, reads as empty so current_profile() keeps the last value.
         return value if isinstance(value, str) and value in PROFILES else ''
     except (OSError, subprocess.SubprocessError, UnicodeDecodeError, ValueError, TypeError, KeyError):
         return ''
@@ -266,8 +268,9 @@ def current_profile():
     if _profile['at'] and now - _profile['at'] < PROFILE_TTL and stamp == _profile['stamp']:
         return _profile['value']
     value = read_profile()
-    # An empty read (busctl failed, the daemon restarted, the answer did not
-    # parse) must not blank the chip for PROFILE_TTL: keep the last good value.
+    # An empty read (busctl failed or raised, the daemon restarted, the answer
+    # did not parse or was not a profile name) must not blank the chip for
+    # PROFILE_TTL: keep the last good value.
     if value:
         _profile['value'] = value
     _profile['at'] = now
