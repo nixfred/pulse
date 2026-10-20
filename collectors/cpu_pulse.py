@@ -19,6 +19,11 @@ PROFILES = ('power-saver', 'balanced', 'performance')
 LINKS = {'repo': 'https://github.com/nixfred/omacpu',
          'author': 'https://nixfred.com'}
 SYS_CPU = Path('/sys/devices/system/cpu')
+HWMON = Path('/sys/class/hwmon')
+THERMAL = Path('/sys/class/thermal')
+# AMD's processor sensors: the in-kernel driver and the out-of-tree one that
+# reads the same registers. Neither has a reading per core.
+AMD_HWMON = ('k10temp', 'zenpower')
 CLK = os.sysconf('SC_CLK_TCK')
 # Columns of a /proc/stat cpu line. guest and guest_nice are already inside
 # user and nice, so they never join the total.
@@ -177,10 +182,38 @@ def usage(now, then):
     breakdown = {k: v / total * 100 for k, v in zip(STAT_FIELDS, delta)}
     return max(0.0, min(100.0, 100 - breakdown['idle'] - breakdown['iowait'])), breakdown
 
+def amd_package(h, name, sensors):
+    """The package temperature of one AMD hwmon, listing each reading it has.
+
+    Tctl is the temperature the firmware throttles on. Tdie, which some early
+    Ryzens expose beside it, is the same reading without the offset they add to
+    Tctl for the fan curve, so it wins where present. Tccd<n> is one chiplet
+    each: a sensor, not the package. Pre-Zen parts give one unlabelled reading.
+    """
+    found = {}
+    for f in sorted(h.glob('temp*_input'), key=lambda f: int(re.sub(r'\D', '', f.name) or 0)):
+        value = read_int(f)
+        if value is None:
+            continue
+        value /= 1000
+        label = read(f.with_name(f.name.replace('_input', '_label'))).strip()
+        found.setdefault(label, value)
+        sensors.append({'label': label or name, 'temp': value})
+    for label in ('Tdie', 'Tctl', ''):
+        if label in found:
+            return found[label]
+    return None
+
 def temperatures():
     package, cores, sensors = None, {}, []
-    for h in sorted(Path('/sys/class/hwmon').glob('hwmon*')):
-        if read(h / 'name').strip() != 'coretemp':
+    for h in sorted(HWMON.glob('hwmon*')):
+        name = read(h / 'name').strip()
+        if name in AMD_HWMON:
+            value = amd_package(h, name, sensors)
+            if value is not None:
+                package = value if package is None else max(package, value)
+            continue
+        if name != 'coretemp':
             continue
         package_id = None
         for label_file in h.glob('temp*_label'):
@@ -200,7 +233,7 @@ def temperatures():
                 cores[(package_id, label[5:])] = value
             sensors.append({'label': label, 'temp': value})
     fallback = None
-    for z in sorted(Path('/sys/class/thermal').glob('thermal_zone*'), key=lambda z: int(re.sub(r'\D', '', z.name) or 0)):
+    for z in sorted(THERMAL.glob('thermal_zone*'), key=lambda z: int(re.sub(r'\D', '', z.name) or 0)):
         kind = read(z / 'type').strip()
         value = read_int(z / 'temp')
         if value is None or value <= 0:
