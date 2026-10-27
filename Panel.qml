@@ -283,36 +283,59 @@ Panel {
         //     the Disk domain ("FREE SPACE ON /HOME/PI/GOOGLE"), so an
         //     unbounded caption could ask the bar to re-lay out by a hundred
         //     pixels between one sample and the next.
+        //
+        // A left or right bar is one chip wide, so there the headline goes
+        // under the chip, on two lines and shrunk to the bar's width, and the
+        // caption is left to the tooltip. Side by side, the row was wider
+        // than the bar and was cut off at both edges.
         readonly property int captionCeiling: 110
-        Row {
+        Grid {
             id: barRow
             anchors.centerIn: parent
-            spacing: 5
+            columns: button.vertical ? 1 : 2
+            columnSpacing: 5
+            rowSpacing: 2
+            horizontalItemAlignment: Grid.AlignHCenter
+            verticalItemAlignment: Grid.AlignVCenter
             Loader {
                 id: chipLoader
-                anchors.verticalCenter: parent.verticalCenter
                 // Keyed on the domain so the chip is rebuilt when the icon
                 // switches, rather than a stale one being re-bound.
                 sourceComponent: root.barDomain ? root.barDomain.barChip : null
             }
             Column {
-                anchors.verticalCenter: parent.verticalCenter
                 spacing: 0
+                // Wider than the bar at 8 px, a headline breaks at its last
+                // space ("18.5" over "GiB"), never inside a unit as word
+                // wrapping does ("1 Gbit/" over "s").
+                TextMetrics {
+                    id: headlineMetrics
+                    font.family: Style.font.family
+                    font.pixelSize: 8
+                    font.bold: true
+                    text: root.barDomain ? root.barDomain.headline : '—'
+                }
                 Text {
                     id: barHeadline
-                    text: root.barDomain ? root.barDomain.headline : '—'
+                    text: button.vertical && headlineMetrics.width > button.barSize - 2
+                          ? headlineMetrics.text.replace(/ (?=\S+$)/, '\n') : headlineMetrics.text
                     color: root.barForeground
                     font.family: Style.font.family
-                    font.pixelSize: 12
+                    font.pixelSize: button.vertical ? 10 : 12
                     font.bold: true
                     elide: Text.ElideRight
-                    width: Math.min(implicitWidth, button.captionCeiling)
+                    width: button.vertical ? button.barSize - 2 : Math.min(implicitWidth, button.captionCeiling)
+                    horizontalAlignment: button.vertical ? Text.AlignHCenter : Text.AlignLeft
+                    maximumLineCount: button.vertical ? 2 : 1
+                    fontSizeMode: button.vertical ? Text.HorizontalFit : Text.FixedSize
+                    minimumPixelSize: 6
                     textFormat: Text.PlainText
                 }
                 Text {
                     id: barCaptionText
                     text: root.barCaption
                     color: root.barDomain ? root.barDomain.barCaptionInk : root.barForeground
+                    visible: !button.vertical
                     font.pixelSize: 7
                     font.letterSpacing: 0.6
                     font.bold: true
